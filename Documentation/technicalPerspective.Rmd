@@ -1,0 +1,93 @@
+---
+title: "House Prices from a Consultant's Perspective: Technical"
+author: 'Craig "Doc" Savage'
+date: "!r Sys.Date()"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Executive Summary
+
+# Introduction
+
+## Scope
+
+### In Scope
+
+### Out of Scope
+
+## Library Load
+
+```{r libraryLoad}
+library( tidyverse )
+library( e1071 )
+```
+## Data Load
+
+```{r dataLoad}
+rawTrainData <- readr::read_csv( '../input/train.csv' ) %>% 
+  mutate( Source='Train' )
+rawTestData <- readr::read_csv( '../input/test.csv' ) %>% 
+  mutate( SalePrice=NA, Source='Test' )
+rawFullData <- bind_rows( rawTrainData, rawTestData )
+```
+
+## Data Cleaning
+
+```{r dataClean}
+# Write a function to clean the data
+# It's quite simplistic: Replace NA values.
+
+cleanHousePriceData <- function( x ){
+  y <- x %>%
+    # For character variables, replace them with "NA" (text)
+    mutate_if( is.character, funs( if_else( is.na( . ), 'NA', . ) ) ) %>%
+    # For integers variables, replace them with 0L (i.e. integer 0) 
+    mutate_if( is.integer, funs( if_else( is.na( . ), 0L, . ) ) ) %>%
+    # Replace missing doubles with 0.0
+    mutate_if( is.double, funs( if_else( is.na( . ), 0.0, . ) ) ) %>%
+    mutate_if( is.character, as.factor )
+  return( y )
+}
+
+fullData <- cleanHousePriceData( rawFullData )
+trainData <- fullData %>% filter( Source=='Train' )
+testData <- fullData %>% filter( Source=='Test' )
+```
+
+# Model Derivation
+
+
+```{r modelDerivation}
+trainData1 <- trainData %>% select( -Id )
+svmModel <- svm( SalePrice ~ ., data = trainData1, cost=3, type='eps-regression' )
+```
+
+# Predictions
+
+```{r predictData}
+# Get training and test predictions
+predTrainData <- trainData %>% 
+  mutate( predPrice=predict( svmModel, newdata=. ) )
+predTestData <- testData %>%
+  mutate( predPrice=predict( svmModel, newdata=. ) ) 
+
+submissionData <- predTestData %>% 
+  select( Id, predPrice ) %>%
+  rename( SalePrice=predPrice )
+# Output file for submission to Kaggle
+write.csv( submissionData, file='../Output/svm_submssion.csv' )
+```
+
+# Recommendations
+
+## Implementation
+
+## Monitoring
+
+# Conclusions
+
+## Data

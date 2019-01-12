@@ -1,0 +1,38 @@
+---
+title: "House Prices from a Consultant's Perspective: Business"
+author: 'Craig "Doc" Savage'
+date: "!r Sys.Date()"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Executive Summary
+
+# Introduction
+
+## Scope
+
+### In Scope
+
+### Out of Scope
+
+## Library Load
+
+## Data Load
+
+# Model Derivation
+
+# Predictions
+
+# Recommendations
+
+## Implementation
+
+## Monitoring
+
+# Conclusions
+
+## Data
