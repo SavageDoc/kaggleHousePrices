@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message=FALSE )
 ```
 
 # Executive Summary
@@ -22,16 +22,28 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Library Load
 
 ```{r libraryLoad}
+# Tidyverse for most of the code
 library( tidyverse )
+# e1071 for svm (support vector machine) functions
 library( e1071 )
+# magrittr for the double pipe
+library( magrittr )
+# lubridate for date manipulation
+library( lubridate )
 ```
+
 ## Data Load
 
 ```{r dataLoad}
-rawTrainData <- readr::read_csv( '../input/train.csv' ) %>% 
+# Training data
+rawTrainData <- readr::read_csv( '../input/train.csv' ) %>%
+  # Flag as Train
   mutate( Source='Train' )
-rawTestData <- readr::read_csv( '../input/test.csv' ) %>% 
+# Test data
+rawTestData <- readr::read_csv( '../input/test.csv' ) %>%
+  # Leave a placeholder for SalePrice and flag as Test
   mutate( SalePrice=NA, Source='Test' )
+# Bind so that the factors work properly (faster than manually keying everything in)
 rawFullData <- bind_rows( rawTrainData, rawTestData )
 ```
 
@@ -39,8 +51,7 @@ rawFullData <- bind_rows( rawTrainData, rawTestData )
 
 ```{r dataClean}
 # Write a function to clean the data
-# It's quite simplistic: Replace NA values.
-
+# It's quite simplistic: Replace NA values. Note this overwrites placeholder for test data - but that's fine.
 cleanHousePriceData <- function( x ){
   y <- x %>%
     # For character variables, replace them with "NA" (text)
@@ -49,11 +60,14 @@ cleanHousePriceData <- function( x ){
     mutate_if( is.integer, funs( if_else( is.na( . ), 0L, . ) ) ) %>%
     # Replace missing doubles with 0.0
     mutate_if( is.double, funs( if_else( is.na( . ), 0.0, . ) ) ) %>%
+    # Convert all the characters to factors for SVM functionality
     mutate_if( is.character, as.factor )
   return( y )
 }
 
+# Clean data
 fullData <- cleanHousePriceData( rawFullData )
+# Separate back into training and test - that's why we have the Source variable. ;)
 trainData <- fullData %>% filter( Source=='Train' )
 testData <- fullData %>% filter( Source=='Test' )
 ```
@@ -62,7 +76,9 @@ testData <- fullData %>% filter( Source=='Test' )
 
 
 ```{r modelDerivation}
+# Don't train on the ID variable!
 trainData1 <- trainData %>% select( -Id )
+# Train the SVM. 
 svmModel <- svm( SalePrice ~ ., data = trainData1, cost=3, type='eps-regression' )
 ```
 
@@ -75,11 +91,12 @@ predTrainData <- trainData %>%
 predTestData <- testData %>%
   mutate( predPrice=predict( svmModel, newdata=. ) ) 
 
+# Get the submission data into the correct format
 submissionData <- predTestData %>% 
   select( Id, predPrice ) %>%
   rename( SalePrice=predPrice )
-# Output file for submission to Kaggle
-write.csv( submissionData, file='../Output/svm_submssion.csv' )
+# Output file for submission to Kaggle - note this dumps it into the current directory!
+write.csv( submissionData, file='svm_submssion.csv', row.names=FALSE )
 ```
 
 # Recommendations
@@ -87,6 +104,46 @@ write.csv( submissionData, file='../Output/svm_submssion.csv' )
 ## Implementation
 
 ## Monitoring
+
+```{r oldModel}
+oldModel <- lm( SalePrice ~ YrSold + MoSold + LotArea + BedroomAbvGr, data=predTrainData )
+predTrainData$oldPredPrice <- fitted( oldModel )
+predTestData$oldPredPrice <- predict( oldModel, newdata=predTestData )
+# To check model, the predTestData should match the submissionData
+checkData <- readr::read_csv( '../Input/sample_submission.csv' )
+checkSummary <- checkData %>%
+  inner_join( predTestData %>% select( Id, oldPredPrice ), by='Id' ) %>%
+  summarise( maxAbsDiff=max( abs( oldPredPrice - SalePrice ) )
+             , meanAbsDiff=mean( abs( oldPredPrice - SalePrice ) ) )
+```
+
+```{r monitorPlots}
+# Make a function to calculate the metric
+calcLogRMSE <- function( y1, y2 ){
+  logRMSE <- sqrt( mean( (log( y1 ) - log( y2 ) )^2 ) )
+  return( logRMSE )
+}
+
+plotData <- predTrainData %>%
+  mutate( Date=lubridate::ymd( paste( YrSold, MoSold, '01', sep='-' ) ) ) %>%
+  group_by( Date ) %>%
+  summarise( N=n()
+             , oldMetric=calcLogRMSE( SalePrice, oldPredPrice )
+             , newMetric=calcLogRMSE( SalePrice, predPrice ) )
+
+timePlot <- ggplot( data=plotData ) +
+  geom_point( aes( x=Date, y=oldMetric, colour='Linear', size=N, shape='Linear' ) ) +
+  geom_point( aes( x=Date, y=newMetric, colour='SVM', size=N, shape='SVM' ) ) + 
+  geom_line( aes( x=Date, y=oldMetric, colour='Linear' ) ) +
+  geom_line( aes( x=Date, y=newMetric, colour='SVM' ) ) + 
+  scale_colour_brewer( type='qual' ) +
+  scale_x_date( date_labels = '%b-%Y' ) +
+  guides( colour=guide_legend( 'Model' ), shape=guide_legend( 'Model' ) ) +
+  labs( x='Date', y='RMSE', title='Example potential monitoring of house price prediction model performance', subtitle='Log RMSE metric' ) +
+  theme( legend.position='bottom' )
+
+timePlot
+```
 
 # Conclusions
 
