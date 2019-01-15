@@ -1,38 +1,99 @@
 ---
-title: "House Prices from a Consultant's Perspective: Technical"
+title: "House Prices from a Consultant's Perspective: Support Vector Machines"
 author: 'Craig "Doc" Savage'
-date: "!r Sys.Date()"
-output: html_document
+date: "14 Jan, 2019"
+output: 
+  html_document: 
+    toc: yes
+    toc_depth: 2
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message=FALSE )
+knitr::opts_chunk$set(message=FALSE )
 ```
 
 # Executive Summary
 
-# Introduction
+Kaggle kernels are very informative from a technical point of view. Indeed, much of the technical information contained in this kernel was inspired by others. However, in my professional opinion, the layout and contents of many kernels are inappropriate as formal documentation for engagements as a data science professional. As a start, most do not include an Executive Summary with a (very) brief overview of the document and a summary of the results.
+
+A support vector machine (SVM) model has been created to predict house prices. It results in a reduction of `r scales::percent( (0.4089 - 0.11879)/0.4089 )` in the error of predicting house prices.
+
+For a professional data science engagement, I'd put an estimated dollar savings the increased accuracy of using an SVM would get me. Unfortunately, as there's no real mapping between improved accuracy and a business impact, I'm at a loss to include it in this example. 
+
+I had every intention of writing this in a serious tone. However, I write enough serious reports for my day job; doing Kaggle competitions is fun for me[^1]. 
+
+[^1]:Yes, I'm a nerd.
+
+As this is for fun, that means I get to do unprofessional things like include animated GIFs in my report. Thus:
+
+![Picture: The cartoon character "Dick Dastardly" laughing with apparent mischievous intent.](https://media.giphy.com/media/25GN8GZ7KP3ZYnHgIJ/giphy.gif)
+
+# Introduction{.tabset .tabset-fade .tabset-pills}
+
+The aim of this kernel is to provide an example template for reporting results. Along the way, I've utilised a support vector machine (SVM) to fit the data. Note there's nothing novel about this - Chengran (Owen) Ouyang has done this in a  [public kernel](https://www.kaggle.com/couyang/hybrid-svm-benchmark-approach-0-11180-lb-top-2), along with incorporating other results to beat the result from this kernel. 
+
+My aim is to include extra information that has served me well in a professional consulting career, including:  
+
+* Explicitly calling out the scope, including things that are out-of-scope.  
+* Providing implementation instructions, including test cases.
+* Conceptual monitoring information to ensure the model continues to work as intended.  
+* ~~Animated GIFs~~ (well, okay, these aren't part of my professional career, but this is a fun Kaggle entry so...)
+
+![Picture: Barack Obama shrugging.](https://media.giphy.com/media/pPhyAv5t9V8djyRFJH/giphy.gif)
 
 ## Scope
 
+The first order of business is to define the scope of the work. You might think, as I once did, that the out-of-scope section is unnecessary. If it's not in scope, then it must be out-of-scope. However, in my experience, that's not the case.
+
+Closer inspection will show the intent: the out-of-scope section sets boundaries for the in-scope section. There is a correspondance of every item in the in-scope section to the out-of-scope section. The out-of-scope section purposefully sets boundaries around the in-scope section.
+
+Finally, I should note that these are only helpers in case of conflict surrounding this work. Difficult engagements may have a client demanding a piece of work, and may disregard the out-of-scope section even if they've formally approved the document. While such engagements have been rare, they do still happen, and dealing with those situations is one of the many skills that are useful as a professional data scientist.
+
 ### In Scope
+
+The work entails the following:
+
+* Data cleaning to account for missing variables.  
+* Construction of a support vector machine (SVM) regression model.  
+* Implementation instructions for the model, including test cases.  
+* Suggested monitoring information, including comparison to the existing model.  
 
 ### Out of Scope
 
+The work specifically does not entail the following:
+
+* External data not included in the received data sets (i.e. `train.csv` and `test.csv`).  
+* Use of algorithms other than SVM for a new model.  
+* The actual implementation, including data flows, source code, and any required testing.  
+* The prototype monitoring demonstrates information content and metrics that *may* be tracked. Modification of the display (e.g. colours, scales, etc) or incorporation into existing dashboards is out-of-scope.
+
 ## Library Load
+
+Very few external packages are required for this work. These include:
+
+* `tidyverse`: Load as a whole for simplicity. Data are loaded via `readr`, data wrangling is via `dplyr`, and graphs are via `ggplot2`.  
+* `e1071`: Support vector machine functions.  
+* `lubridate`: Conversion of month and year into a date.
 
 ```{r libraryLoad}
 # Tidyverse for most of the code
 library( tidyverse )
 # e1071 for svm (support vector machine) functions
 library( e1071 )
-# magrittr for the double pipe
-library( magrittr )
 # lubridate for date manipulation
 library( lubridate )
 ```
 
 ## Data Load
+
+Four data files were provided, namely:  
+
+* `train.csv`: Training data, including the target variable, `SalePrice`.  
+* `test.csv`: Test data. Includes all of the variables in `train.csv`, **except** the target variable of `SalePrice`.  
+* `sample_submission.csv`: A sample submission, to serve as a template for custom submissions. For this document, I'll be using it as an example of a hypothetical "existing model" that isn't working as well as a client might like.  
+* `data_description.txt`: A data dictionary, detailing every column in the `train.csv` and `test.csv` data sets. While I haven't included it in this document, be wary of any engagement that doesn't have one of these to accompany your data!
+
+I've included a `Source` variable to separate training from test data later.
 
 ```{r dataLoad}
 # Training data
@@ -42,19 +103,25 @@ rawTrainData <- readr::read_csv( '../input/train.csv' ) %>%
 # Test data
 rawTestData <- readr::read_csv( '../input/test.csv' ) %>%
   # Leave a placeholder for SalePrice and flag as Test
-  mutate( SalePrice=NA, Source='Test' )
+  mutate( SalePrice=NA_real_, Source='Test' )
 # Bind so that the factors work properly (faster than manually keying everything in)
+# I'm assuming that there are no new factor levels in the test data....
 rawFullData <- bind_rows( rawTrainData, rawTestData )
 ```
 
 ## Data Cleaning
+
+Data cleaning here is rather mundane, and consists of populating missing values. For most variables, the "missing" variables make sense:
+
+* For factors (or character values), missing indicates that there is none. The `Alley` variable has many cases of this: `NA` indicates there isn't alley access.  
+* For numeric values, missing normally means zero. For example, the `GarageYrBlt` variable has many missing values: This is to be expected if there is no garage. I've replaced all these values with zero. 
 
 ```{r dataClean}
 # Write a function to clean the data
 # It's quite simplistic: Replace NA values. Note this overwrites placeholder for test data - but that's fine.
 cleanHousePriceData <- function( x ){
   y <- x %>%
-    # For character variables, replace them with "NA" (text)
+    # For character variables, replace them with "NA" (text) as opposed to NA_character_
     mutate_if( is.character, funs( if_else( is.na( . ), 'NA', . ) ) ) %>%
     # For integers variables, replace them with 0L (i.e. integer 0) 
     mutate_if( is.integer, funs( if_else( is.na( . ), 0L, . ) ) ) %>%
@@ -74,15 +141,26 @@ testData <- fullData %>% filter( Source=='Test' )
 
 # Model Derivation
 
+Having loaded and cleaned the data, we're now ready to do the machine learning! Let's use a support vector machine, as mentioned in the scope document.
 
 ```{r modelDerivation}
-# Don't train on the ID variable!
-trainData1 <- trainData %>% select( -Id )
 # Train the SVM. 
-svmModel <- svm( SalePrice ~ ., data = trainData1, cost=3, type='eps-regression' )
+svmModel <- svm( SalePrice ~ .
+                  # Don't train on the ID or Source variables!
+                 , data = trainData %>% select( -Id, -Source )
+                 # cost=3 from analysis by Cheung (Owen) Chung - see Acknowledgements
+                 , cost=3, type='eps-regression' )
 ```
 
+...and we're done. It feels rather anticlimactic, doesn't it?
+
+![Picture: A man reading to the end of a scroll. Upon reaching the end, the text of "That can't be it! Where's the rest of it?" appears, as he looks under and around the scroll.](https://media.giphy.com/media/1xOyI9ES9lsB7YnK2t/giphy.gif)
+
+This is both a blessing and a curse for data scientists. A number of algorithms are structured similarly: A convenient function call to do all the complex mathematics. Knowing which functions to use, and ensuring that the data are sufficient, is, in my opinion, the technical part of being a data scientist.
+
 # Predictions
+
+Having built a model, it is used to generate predictions for the training and test sets. The test set was then uploaded to be scored on the public leaderboard.
 
 ```{r predictData}
 # Get training and test predictions
@@ -93,58 +171,222 @@ predTestData <- testData %>%
 
 # Get the submission data into the correct format
 submissionData <- predTestData %>% 
+  # Only keep 2 variables
   select( Id, predPrice ) %>%
+  # Enforce naming convention
   rename( SalePrice=predPrice )
 # Output file for submission to Kaggle - note this dumps it into the current directory!
-write.csv( submissionData, file='svm_submssion.csv', row.names=FALSE )
+# Disabled for Kaggle kernel....
+#write.csv( submissionData, file='svm_submssion.csv'
+#           # Turn off row names for compatability -- output should have 2 columns
+#           , row.names=FALSE )
 ```
+
+Generating predictions is similar to the fitting process: With a statistical programming language, the complexities are handled by the functions, so the process becomes a single line. 
 
 # Recommendations
 
+I have two groups of recommendations: 
+
+1. **Implementation**: While building the model and generating predictions is straightforward in an evironment built for statistical programming, many organisations have different (or *very* different) production environments. Along with the model, it is good practice to include instructions and test cases so that there is assurance that the implemented model is working as intended.  
+2. **Monitoring**: Once the model is implemented, the users of the model should have assurance that the model continues to work correctly. How much variation in model performance is "normal"? Is model performance better (or worse) in certain situations? With many machine learning models, it is difficult to assess what external factors influence prediction accuracy.  
+
+
 ## Implementation
+
+The implementation of the SVM is straightforward in an `R` environment, as demonstrated by the above code. Furthermore, we can collect a sample of results to be used as test cases.
+
+```{r testCases}
+testTrain <- predTrainData %>%
+  # Grab the Id and predictions only, to save space
+  select( Id, predPrice ) %>%
+  # How many is "enough"? I've taken 10.
+  sample_n( 10 ) 
+
+knitr::kable( testTrain, caption='Example test cases from training data.' )
+```
+  
+It is unfortunate that the ease of making predictions in `R` obscures the complications of implementing the predictions from scratch. It's also rather common: Libraries are often compiled for speed, so getting to the heart of what's *actually* happening is a bit of an endeavour.
+
+Such is the case with the `predict.svm` function. It does have support to export results -- `write.svm` provides an interface with the `libsvm` package. Using this, we can export the support vectors and the scaling parameters for both inputs and outputs.
+
+But what if our client organisation doesn't use [`libsvm`](https://www.csie.ntu.edu.tw/~cjlin/libsvm/)? Then we'd have to either get it onto the system to use our model, or recreate the prediction infrastructure.
+
+So here I'm ... a bit embarrassed. You see, I'm writing this to make the point that providing implementation instructions is often not straightforward, and it's important as a data scientist to provide the instructions to be of value to the client. But, I don't have such instructions because the tools have been built around open-source software, and I'm not sure how the required information have been stored in the SVM model object. If this were a project for a client, I'd reproduce the prediction with all my data. 
+
+But this is an open Kaggle competition, not a deliverable for a client. 
+
+So...um...yeah....
+
+![Picture: Spock from Star Trek fidgeting with his collar, with the subtext "Awkward"](https://media.giphy.com/media/tUmqyBrCWAyTC/giphy.gif)
+
+Let's talk about Monitoring, shall we?
 
 ## Monitoring
 
+Upon delivering the model and its implementation to the client, I like to provide some metrics for the client to have assurance that the model is working correctly. Again, using the training data, it's easy to produce some metrics and a time-series of retrospective model performance.
+
+I consider two plots:  
+1. A retrospective view of model performance. I'd prefer to do this with test data, but, alas, we don't have truth from Kaggle regarding the test data. This provides an indication for a range of "normal" performance.    
+2. A histogram of the residuals. As the metric is RSME of the logarithm of house price predictions, I'm using $\log( \frac{\hat{p}}{p} )$, being the log of the ratio of the predicted price, $\hat{p}$, and actual price, $p$. This provides a remedial measure of model performance.
+
+Of course, you or the client might have other ideas for what information is "best" to have confidence the model is working correctly. It's ideal if there is a mature, trusted monitoring suite into which our new model can be implemented. However, this may not always be the case.
+
+### Old Model
+
+I've assumed that the linear model described as the source of `sample_submission.csv` is the existing model. I'll be comparing the SVM model to this to demonstrate the improvement relative to the "baseline" model.
+
+Of course, that means I first need to implement and test this model.
+
 ```{r oldModel}
+# The sample_submission.csv is said to be a linear model with 4 variables...
 oldModel <- lm( SalePrice ~ YrSold + MoSold + LotArea + BedroomAbvGr, data=predTrainData )
+# Record training data
 predTrainData$oldPredPrice <- fitted( oldModel )
+# And test data
 predTestData$oldPredPrice <- predict( oldModel, newdata=predTestData )
 # To check model, the predTestData should match the submissionData
-checkData <- readr::read_csv( '../Input/sample_submission.csv' )
+checkData <- readr::read_csv( '../input/sample_submission.csv' )
+# Join sample_submission to our calculation....
 checkSummary <- checkData %>%
   inner_join( predTestData %>% select( Id, oldPredPrice ), by='Id' ) %>%
+  # Check match...
   summarise( maxAbsDiff=max( abs( oldPredPrice - SalePrice ) )
              , meanAbsDiff=mean( abs( oldPredPrice - SalePrice ) ) )
 ```
 
-```{r monitorPlots}
+The maximum absolute difference between the sample submission and my reproduction is on the order of $10^{-10}$. This is sufficiently close that I've concluded that the model has been reproduced. 
+
+### Monitoring Plots
+
+First, let's consider a retrospective history of model performance, of both the baseline model and the SVM.
+
+```{r timePlots}
 # Make a function to calculate the metric
 calcLogRMSE <- function( y1, y2 ){
   logRMSE <- sqrt( mean( (log( y1 ) - log( y2 ) )^2 ) )
   return( logRMSE )
 }
 
-plotData <- predTrainData %>%
+# Summarise the data by Date (Month and Year)
+timePlotData <- predTrainData %>%
+  # lubridate can handle the messy data (e.g. 2010-7-01)
   mutate( Date=lubridate::ymd( paste( YrSold, MoSold, '01', sep='-' ) ) ) %>%
   group_by( Date ) %>%
+  # Collect summary metrics
   summarise( N=n()
              , oldMetric=calcLogRMSE( SalePrice, oldPredPrice )
              , newMetric=calcLogRMSE( SalePrice, predPrice ) )
 
-timePlot <- ggplot( data=plotData ) +
+# Build the plot
+timePlot <- ggplot( data=timePlotData ) +
   geom_point( aes( x=Date, y=oldMetric, colour='Linear', size=N, shape='Linear' ) ) +
   geom_point( aes( x=Date, y=newMetric, colour='SVM', size=N, shape='SVM' ) ) + 
   geom_line( aes( x=Date, y=oldMetric, colour='Linear' ) ) +
   geom_line( aes( x=Date, y=newMetric, colour='SVM' ) ) + 
   scale_colour_brewer( type='qual' ) +
+  # Only use the month and year for date labels
   scale_x_date( date_labels = '%b-%Y' ) +
+  # Merge the guides for colour and shape
   guides( colour=guide_legend( 'Model' ), shape=guide_legend( 'Model' ) ) +
-  labs( x='Date', y='RMSE', title='Example potential monitoring of house price prediction model performance', subtitle='Log RMSE metric' ) +
+  labs( x='Date', y='RMSE'
+        , title='Example potential monitoring of house price prediction model performance'
+        , subtitle='RMSE of log( Price ) metric' ) +
   theme( legend.position='bottom' )
 
 timePlot
 ```
 
+From the historical plot, we see that the average performance of the SVM is better than the linear model. In fact, for any given month, the SVM has a lower RMSE. But there are some months that the SVM has substantially worse performance than "usual" (i.e. about double the RMSE). 
+
+I can use this to guess the model performance on the private test data: I expect my results to be between 0.05 and 0.15, but I won't be flabbergasted if it comes back as 0.2.
+
+I'll also provide some of the data to serve as test cases that the implementation of monitoring is correct.
+
+```{r timeTests}
+timeTestData <- timePlotData %>%
+  # Grab 5 months
+  sample_n( 5 )
+
+knitr::kable( timeTestData 
+              , digits=4 
+              , caption='Example results from prototype monitoring.'
+              , col.names=c('Date', 'Number', 'Old RMSE', 'New RMSE' ) )
+```
+
+Secondly, I'd recommend building a histogram of the residuals. This might be best if it were done monthly as well, but I've taken them all to show greater numbers. What would the client prefer?
+
+
+```{r residPlot}
+residPlotData <- predTrainData %>% 
+  select( Id, SalePrice, oldPredPrice, predPrice ) %>%
+  mutate( oldDelta=log( oldPredPrice/SalePrice )
+          , newDelta=log( predPrice/SalePrice ) )
+
+residPlot <- ggplot( residPlotData ) +
+  geom_histogram( aes( x=oldDelta, fill='Linear' ), bins=30, alpha=0.6 ) +
+  geom_histogram( aes( x=newDelta, fill='SVM' ), bins=30, alpha=0.6 ) +
+  scale_fill_brewer( type='qual' ) + 
+  labs( x='Error: log( Predicted / Actual )', y='Count'
+        , title='Distribution of residuals for Linear and SVM models' ) +
+  guides( fill=guide_legend( 'Model' ) ) +
+  theme( legend.position='bottom' )
+
+residPlot
+```
+
+The SVM has a tighter range than the Linear model, and looks roughly normal. 
+
+As before, we can sample some residuals to serve as test cases.
+
+```{r residTest}
+residTestData <- residPlotData %>%
+  # I could set a seed first to ensure the same 10 are always generated....
+  # But I don't really care which I sample.
+  sample_n( 10 )
+
+knitr::kable( residTestData
+              , digits=4
+              , caption='Example test cases for residual calculation'
+              , col.names=c('ID', 'Observed Price', 'Old Model', 'New Model'
+                            , 'Old Log( Ratio )', 'New Log( Ratio )' ) )
+```
+
+Note that it's likely that we'll be able to select an *individual* case where the new model performs worse than the old model. It's another conversation that can test your ability as a data scientist. 
+
 # Conclusions
 
-## Data
+I've tried to include information that I've found useful as a professional data science consultant. I've also tried to emphasise an important part of being a data scientist: You should take opportunities to have fun with your work. 
+
+![Picture: Snoopy and Woodstock from the cartoon "Peanuts" dancing together.](https://media.giphy.com/media/3ornjX5H61CKdFonks/giphy.gif)
+
+On a more serious note, I do encourage you to try to consider the business needs of data science, what the business impact will be (in terms of dollars rather than reduction of RSME).
+
+I'll be publishing another kernel based on discussions with a previous client on what the expectations are for a house price model. I expect it to yield a worse RMSE but be of greater use to the business. I'll be using the same general kernel outline and structure, most likely including a different set of animated GIFs, because I'm still doing Kaggle competitions for fun[^2].
+
+[^2]: Yes, I'm still a nerd.
+
+# Acknowledgements
+
+In building this, I'd like to thank the following:
+
+1. [Kaggle](https://www.kaggle.com), for hosting the data and the [open competition](https://www.kaggle.com/c/house-prices-advanced-regression-techniques).
+
+2. Dean De Cock for [sharing the collected house price data](http://jse.amstat.org/v19n3/decock.pdf).
+
+3. Chengran (Owen) Ouyang for the [public kernel](https://www.kaggle.com/couyang/hybrid-svm-benchmark-approach-0-11180-lb-top-2) on using SVMs in `R`, and sharing the tuning results for the cost.
+
+4. Chih-Chung Chang and Chih-Jen Lin for the LIBSVM software and accompanying documentation. As they have instructions as to how they'd like to be cited:  
+> Chih-Chung Chang and Chih-Jen Lin, LIBSVM : a library for support vector machines. ACM Transactions on Intelligent Systems and Technology, 2:27:1--27:27, 2011. Software available at http://www.csie.ntu.edu.tw/~cjlin/libsvm
+
+5. giphy.com for making animated GIFs for extra pizzazz in this kernel.
+
+# Appendix
+
+## Session Info
+
+The `sessionInfo()` used in the creation of this document is below. It's a place to start if there are difficulties reproducing this report (i.e. check `R` version, package versions, etc.).
+
+```{r sessionInfo}
+sessionInfo()
+```
