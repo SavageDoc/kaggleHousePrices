@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set( message=FALSE )
 ```
 
 # Executive Summary
@@ -19,11 +19,151 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ### Out of Scope
 
-## Library Load
-
+```{r libraryLoad}
+library( tidyverse )
+library( partykit )
+```
 ## Data Load
 
+```{r dataLoad}
+rawTrainData <- readr::read_csv( '../input/train.csv' ) %>% 
+  mutate( Source='Train' )
+rawTestData <- readr::read_csv( '../input/test.csv' ) %>% 
+  mutate( SalePrice=NA, Source='Test' )
+rawFullData <- bind_rows( rawTrainData, rawTestData )
+```
+
+## Data Cleaning
+
+```{r dataClean}
+# Write a function to clean the data
+# It's quite simplistic: Replace NA values.
+
+cleanHousePriceData <- function( x ){
+  y <- x %>%
+    # For character variables, replace them with "NA" (text)
+    mutate_if( is.character, funs( if_else( is.na( . ), 'NA', . ) ) ) %>%
+    # For integers variables, replace them with 0L (i.e. integer 0) 
+    mutate_if( is.integer, funs( if_else( is.na( . ), 0L, . ) ) ) %>%
+    # Replace missing doubles with 0.0
+    mutate_if( is.double, funs( if_else( is.na( . ), 0.0, . ) ) ) %>%
+    mutate_if( is.character, as.factor )
+  return( y )
+}
+
+fullData <- cleanHousePriceData( rawFullData ) %>%
+  mutate( TotalSF=GrLivArea + `1stFlrSF` + `2ndFlrSF` + TotalBsmtSF
+          , TotalBath=FullBath + 0.5*HalfBath )
+trainData <- fullData %>% filter( Source=='Train' ) 
+testData <- fullData %>% filter( Source=='Test' )
+```
+
 # Model Derivation
+
+
+```{r modelDerivation}
+neighborhoodTrees <- trainData %>%
+  group_by( Neighborhood ) %>%
+  do( treeInfo=lmtree( SalePrice ~ TotalSF | LotArea +
+                         GarageCars  +
+                         TotalBath + BedroomAbvGr +
+                         BldgType
+                       , data=.
+                       # Make alpha larger for more forgiving tree structure
+                       , alpha=0.05
+                       , minsize=5
+                       , terminal='estfun' )
+    )
+
+## Show one
+idx <- which( neighborhoodTrees$Neighborhood == 'NAmes' )
+plot( neighborhoodTrees$treeInfo[[idx]] )
+
+# Augmented the data with the tree structure and predictions
+# I'm not sure why the following doesn't work...
+# augmentedTrainData <- trainData %>%
+#   inner_join( neighborhoodTrees, by='Neighborhood' ) %>%
+#   rowwise() %>%
+#   do( predPriceTemp=predict( .$treeInfo, newdata=., type='response' ) 
+#           , nodeID=predict( .$treeInfo, newdata=., type='node' )  )
+
+# Initialise
+augmentedTrainData <- trainData %>%
+  mutate( predPrice=NA_real_
+          , nodeID=NA_integer_ )
+
+augmentedTestData <- testData %>%
+  mutate( predPrice = NA_real_
+          , nodeID=NA_integer_ )
+
+for( thisNeighborhood in unique( neighborhoodTrees$Neighborhood ) ){
+  trainIdx <- which( trainData$Neighborhood == thisNeighborhood, arr.ind=TRUE )
+  testIdx <- which( testData$Neighborhood==thisNeighborhood, arr.ind=TRUE )
+  treeIdx <- which( neighborhoodTrees$Neighborhood == thisNeighborhood, arr.ind=TRUE )
+
+  augmentedTrainData[trainIdx,'predPrice'] <- predict( 
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    , newdata=trainData[trainIdx,]
+    , type='response' )
+  
+  augmentedTrainData[trainIdx,'nodeID'] <- predict( 
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    ,newdata=trainData[trainIdx,]
+    , type='node' )
+  
+  augmentedTestData[testIdx,'predPrice'] <- predict(
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    ,newdata=testData[testIdx,]
+    , type='response' )
+
+  augmentedTestData[testIdx,'nodeId'] <- predict(
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    ,newdata=testData[testIdx,]
+    , type='node' )
+  
+}
+  
+
+nodeCal <- augmentedTrainData %>%
+  group_by( nodeID ) %>%
+  do( nodeFit=lm( SalePrice ~ predPriceTemp, data=. ) ) %>%
+  broom::tidy( nodeFit, quick=TRUE ) %>%
+  spread( term, estimate ) %>%
+  rename( Intercept='(Intercept)', Slope=predPriceTemp )
+
+augmentedTrainData1 <- augmentedTrainData %>%
+  inner_join( nodeCal, by='nodeID' ) %>%
+  mutate( predPrice=Intercept + Slope * predPriceTemp )
+
+augmentedTestData <- testData %>%
+  inner_join( neighborhoodTrees, by='Neighborhood' ) %>%
+  mutate( predPriceTemp=predict( treeInfo[[1]], newdata=., type='response' ) 
+          , nodeID=predict( treeInfo[[1]], newdata=., type='node' ) ) %>%
+  inner_join( nodeCal, by='nodeID' ) %>%
+  mutate( predPrice=Intercept + Slope * predPriceTemp )
+
+trainPlotTemp <- ggplot( augmentedTrainData
+                      , aes( x=predPriceTemp
+                             , y=SalePrice
+                             , colour=as.factor( nodeID ) ) ) + 
+  geom_point() + 
+  geom_smooth( aes( group=nodeID ), method='lm' ) + 
+  geom_abline( slope=1, intercept=0 ) +
+  scale_colour_brewer( type='qual' )
+
+trainPlotTemp 
+
+trainPlot <- ggplot( augmentedTrainData
+                     , aes( x=predPrice
+                            , y=SalePrice
+                            , colour=as.factor( nodeID ) ) ) +
+  geom_point() + 
+  geom_smooth( aes( group=nodeID ), method='lm' ) +
+  geom_abline( slope = 1, intercept = 0 ) +
+  scale_colour_brewer( type = 'qual' )
+
+trainPlot
+```
 
 # Predictions
 
