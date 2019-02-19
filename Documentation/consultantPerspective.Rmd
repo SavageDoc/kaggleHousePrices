@@ -1,37 +1,350 @@
 ---
 title: "House Prices from a Consultant's Perspective: Business"
 author: 'Craig "Doc" Savage'
-date: "!r Sys.Date()"
-output: html_document
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set( message=FALSE )
 ```
 
 # Executive Summary
+Kaggle kernels are very informative from a technical point of view. Indeed, much of the technical information contained in this kernel was inspired by others. However, in my professional opinion, the layout and contents of many kernels are inappropriate as formal documentation for engagements as a data science professional. As a start, most do not include an Executive Summary with a (very) brief overview of the document and a summary of the results.
+
+A hybrid model has been created to predict house prices. It results in a reduction of `r scales::percent( (0.4089 - 0.11879)/0.4089 )` in the error of predicting house prices.
+
+By employing the model rather than manual valuations, we estimate savings of $\approx$ \$5000 per month, and a reduction in application timelines from a day to under an hour. *Note: Actually, it should be reduced to minutes or even seconds. But, if I were to say a reduction of that magnitude, would I be believed, or would it be seen as too good to be true? If I had the trust of the stakeholders, I'd say minutes.*
+
+I had every intention of writing this in a serious tone. However, I write enough serious reports for my day job; doing Kaggle competitions is fun for me[^1]. 
+
+[^1]:Yes, I'm a nerd.
+
+As this is for fun, that means I get to do unprofessional things like include animated GIFs in my report. Thus:
+
+<!-- ![Picture: The cartoon character "Dick Dastardly" laughing with apparent mischievous intent.](https://media.giphy.com/media/25GN8GZ7KP3ZYnHgIJ/giphy.gif) -->
 
 # Introduction
 
+My aim is to include extra information that has served me well in a professional consulting career, including:  
+
+* Explicitly calling out the scope, including things that are out-of-scope.  
+* Providing implementation instructions, including test cases.
+* Conceptual monitoring information to ensure the model continues to work as intended.  
+* ~~Animated GIFs~~ (well, okay, these aren't part of my professional career, but this is a fun Kaggle entry so...)
+
+<!-- ![Picture: Barack Obama shrugging.](https://media.giphy.com/media/pPhyAv5t9V8djyRFJH/giphy.gif) -->
+
+
 ## Scope
+
+The first order of business is to define the scope of the work. You might think, as I once did, that the out-of-scope section is unnecessary. If it's not in scope, then it must be out-of-scope. However, in my experience, that's not the case.
+
+Closer inspection will show the intent: the out-of-scope section sets boundaries for the in-scope section. There is a correspondance of every item in the in-scope section to the out-of-scope section. The out-of-scope section purposefully sets boundaries around the in-scope section.
+
+Finally, I should note that these are only helpers in case of conflict surrounding this work. Difficult engagements may have a client demanding a piece of work, and may disregard the out-of-scope section even if they've formally approved the document. While such engagements have been rare, they do still happen, and dealing with those situations is one of the many skills that are useful as a professional data scientist.
 
 ### In Scope
 
+The work entails the following:
+
+* Data cleaning to account for missing variables.  
+* Construction of a support vector machine (SVM) regression model.  
+* Implementation instructions for the model, including test cases.  
+* Suggested monitoring information, including comparison to the existing model.  
+
 ### Out of Scope
+
+The work specifically does not entail the following:
+
+* External data not included in the received data sets (i.e. `train.csv` and `test.csv`).  
+* Use of algorithms other than SVM for a new model.  
+* The actual implementation, including data flows, source code, and any required testing.  
+* The prototype monitoring demonstrates information content and metrics that *may* be tracked. Modification of the display (e.g. colours, scales, etc) or incorporation into existing dashboards is out-of-scope.
 
 ## Library Load
 
+* `tidyverse`: Load as a whole for simplicity. Data are loaded via `readr`, data wrangling is via `dplyr`, and graphs are via `ggplot2`.  
+* `partykit`: Hybrid models of decision trees and linear regression.
+* `magrittr`: Double pipe (`%<>%`): some people feel that assignment is important enough to break up but I like to use it for single-line `mutate` commands.
+
+```{r libraryLoad}
+library( tidyverse )
+library( partykit )
+library( magrittr )
+```
 ## Data Load
 
+Four data files were provided, namely:  
+
+* `train.csv`: Training data, including the target variable, `SalePrice`.  
+* `test.csv`: Test data. Includes all of the variables in `train.csv`, **except** the target variable of `SalePrice`.  
+* `sample_submission.csv`: A sample submission, to serve as a template for custom submissions. For this document, I'll be using it as an example of a hypothetical "existing model" that isn't working as well as a client might like.  
+* `data_description.txt`: A data dictionary, detailing every column in the `train.csv` and `test.csv` data sets. While I haven't included it in this document, be wary of any engagement that doesn't have one of these to accompany your data!
+
+I've included a `Source` variable to separate training from test data later.
+
+```{r dataLoad}
+# Training data
+rawTrainData <- readr::read_csv( '../input/train.csv' ) %>%
+  # Flag as Train
+  mutate( Source='Train' )
+# Test data
+rawTestData <- readr::read_csv( '../input/test.csv' ) %>%
+  # Leave a placeholder for SalePrice and flag as Test
+  mutate( SalePrice=NA_real_, Source='Test' )
+# Bind so that the factors work properly (faster than manually keying everything in)
+# I'm assuming that there are no new factor levels in the test data....
+rawFullData <- bind_rows( rawTrainData, rawTestData )
+```
+
+## Data Cleaning
+
+Data cleaning here is rather mundane, and consists of populating missing values. For most variables, the "missing" variables make sense:
+
+* For factors (or character values), missing indicates that there is none. The `Alley` variable has many cases of this: `NA` indicates there isn't alley access.  
+* For numeric values, missing normally means zero. For example, the `GarageYrBlt` variable has many missing values: This is to be expected if there is no garage. I've replaced all these values with zero. 
+
+```{r dataClean}
+# Write a function to clean the data
+# It's quite simplistic: Replace NA values. Note this overwrites placeholder for test data - but that's fine.
+cleanHousePriceData <- function( x ){
+  y <- x %>%
+    # For character variables, replace them with "NA" (text) as opposed to NA_character_
+    mutate_if( is.character, funs( if_else( is.na( . ), 'NA', . ) ) ) %>%
+    # For integers variables, replace them with 0L (i.e. integer 0) 
+    mutate_if( is.integer, funs( if_else( is.na( . ), 0L, . ) ) ) %>%
+    # Replace missing doubles with 0.0
+    mutate_if( is.double, funs( if_else( is.na( . ), 0.0, . ) ) ) %>%
+    # Convert all the characters to factors for SVM functionality
+    mutate_if( is.character, as.factor )
+  return( y )
+}
+
+# Clean data
+fullData <- cleanHousePriceData( rawFullData ) 
+```
+
+
+## Constraints
+
+Unlike the technical version of this document, discussing requirements with my "business stakeholder" has led to constraints regarding the model. To summarise:
+
+* **Explainable**: The existing model isn't trusted by frontline staff, so they ignore the outputs and order professional appraisals. These appraisals incur costs, both monetary and inconvenience to the customer as they await the results. Depending on your client organisation, you can try to "blind them with science" and point to the mathematical theory of support vector machines and the low RMSE, but I don't recommend it.
+
+<!-- Insert GIF of "Too much science" here -->
+
+* **Restricted variables**:The training data set contains over 80 variables. If model usage is onerous, then the staff may continue to ignore the model and order professional appraisals. Furthermore, many of the variables concern the condition or quality of various features; without training, estimation of such variables could be subjective or manipulated (e.g. "Everything is excellent! Can we approve the loan now?")
+
+* **Missing observed values**: This may seem odd for a Kaggle competition, where the aim is to predict values and compare them to observations. However, in this case, the goal is to *not* have observations. The primary product is for mortgage top-ups (also known as "refinances with cash out" or "home equity loans") where a customer is borrowing against the value of their house but does not intend to sell it. In theory, the customer borrows the additional funds and *continues to pay the mortgage without selling the house*. A sale price will only be realised if something goes awry. The valuation is still required for various internal purposes (e.g. accounting, regulatory compliance), so, once again, the *trust* in the model is paramount, leading back to the importance of **explainable**. 
 # Model Derivation
+
+## Variable selection
+
+```{r mutateSplit}
+# Here's my use-case for the double pipe.
+fullData %<>%  mutate( TotalSF=GrLivArea + `1stFlrSF` + `2ndFlrSF` + TotalBsmtSF
+          , TotalBath=FullBath + 0.5*HalfBath )
+# Separate back into training and test - that's why we have the Source variable. ;)
+trainData <- fullData %>% filter( Source=='Train' )
+testData <- fullData %>% filter( Source=='Test' )
+```
+
+## Hybrid models
+
+```{r modelDerivation}
+neighborhoodTrees <- trainData %>%
+  group_by( Neighborhood ) %>%
+  do( treeInfo=lmtree( SalePrice ~ TotalSF | LotArea +
+                         GarageCars  +
+                         TotalBath + BedroomAbvGr +
+                         BldgType
+                       , data=.
+                       # Make alpha larger for more forgiving tree structure
+                       , alpha=0.05
+                       , minsize=10
+                        )
+    )
+
+## Show one
+idx <- which( neighborhoodTrees$Neighborhood == 'CollgCr' )
+plot( neighborhoodTrees$treeInfo[[idx]] )
+```
 
 # Predictions
 
-# Recommendations
+
+```{r predictions}
+# Augmented the data with the tree structure and predictions
+# I'm not sure why the following doesn't work...
+# augmentedTrainData <- trainData %>%
+#   inner_join( neighborhoodTrees, by='Neighborhood' ) %>%
+#   group_by( Neighborhood ) %>%
+#   do( predPriceTemp=predict( treeInfo[[1]] # Take the first one in each group
+#                 , newdata=., type='response' ) 
+#           , nodeID=predict( treeInfo[[1]] # Take the first one in each group
+#                 , newdata=., type='node' )  )
+
+# Initialise
+augmentedTrainData <- trainData %>%
+  mutate( predPrice=NA_real_
+          , nodeID=NA_integer_ )
+
+augmentedTestData <- testData %>%
+  mutate( predPrice = NA_real_
+          , nodeID=NA_integer_ )
+
+# Loop through each neighborhood
+for( thisNeighborhood in unique( neighborhoodTrees$Neighborhood ) ){
+  trainIdx <- which( trainData$Neighborhood == thisNeighborhood, arr.ind=TRUE )
+  testIdx <- which( testData$Neighborhood==thisNeighborhood, arr.ind=TRUE )
+  treeIdx <- which( neighborhoodTrees$Neighborhood == thisNeighborhood, arr.ind=TRUE )
+
+  augmentedTrainData[trainIdx,'predPrice'] <- predict( 
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    , newdata=trainData[trainIdx,]
+    , type='response' )
+  
+  augmentedTrainData[trainIdx,'nodeID'] <- predict( 
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    ,newdata=trainData[trainIdx,]
+    , type='node' )
+  
+  augmentedTestData[testIdx,'predPrice'] <- predict(
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    ,newdata=testData[testIdx,]
+    , type='response' )
+
+  augmentedTestData[testIdx,'nodeId'] <- predict(
+    neighborhoodTrees$treeInfo[[treeIdx]]
+    ,newdata=testData[testIdx,]
+    , type='node' )
+  
+}
+  
+
+predPlot <- ggplot( augmentedTrainData
+                     , aes( x=predPrice
+                            , y=SalePrice
+                            , colour=as.factor( nodeID ) ) ) +
+  geom_point( ) + 
+  geom_abline( slope = 1, intercept = 0 ) +
+  scale_colour_brewer( type = 'qual', guide=guide_legend( 'Node' ) ) +
+  labs( x='Predicted'
+        , y='Observed'
+        , title='Assessment of training data'
+        , subtitle='Using partykit::lmtree' ) +
+  theme( legend.position='bottom' )
+
+predPlot + scale_x_log10() + scale_y_log10()
+```
+
+Check if distributions are similar:
+
+```{r distCheck}
+distPlot <- ggplot( mapping=aes( x=predPrice ) ) + 
+  geom_histogram(data=augmentedTestData
+                 , mapping=aes( fill='Test' )
+                 , bins=30, alpha=0.6)+ 
+  geom_histogram(data=trainData
+                 , aes( x=SalePrice, fill='Observed' )
+                 , bins=30, alpha=0.6)+ 
+  geom_histogram(data=augmentedTrainData
+                 ,aes( x=predPrice, fill='Train')
+                 ,bins=30,alpha=0.6 ) + 
+  scale_fill_brewer( type='qual'
+                     , palette='Dark2'
+                     , guide=guide_legend( 'Price Source' ) ) + 
+  labs( x='Price'
+        , y='Count'
+        , title='Distribution of sale prices'
+        , subtitle='Observed and predictions on training and test data' ) +
+  theme( legend.position='bottom' )
+distPlot + scale_x_log10()
+```
+
+Output the predictions for scoring:
+
+```{r csvOut}
+submissionData <- augmentedTestData %>%
+  select( Id, predPrice ) %>%
+  rename( SalePrice=predPrice )
+
+write.csv( submissionData, file='lmtree_submission.csv', row.names = FALSE )
+```
+
+# Recommendations{.tabset .tabset-fade .tabset-pills}
+
+I have three groups of recommendations: 
+
+1. **Implementation**: While building the model and generating predictions is straightforward in an evironment built for statistical programming, many organisations have different (or *very* different) production environments. Along with the model, it is good practice to include instructions and test cases so that there is assurance that the implemented model is working as intended. 
+
+2. **Monitoring**: Once the model is implemented, the users of the model should have assurance that the model continues to work correctly. How much variation in model performance is "normal"? Is model performance better (or worse) in certain situations? With many machine learning models, it is difficult to assess what external factors influence prediction accuracy.  
+
+3. **Education**:Based on client feedback, I've also included instructions on educating staff regarding model usage, monitoring and incentives. For my technical write-up where the prediction was based on support vector machines, educating the muggles (i.e. non-data scientists) as to how it all works would be a challenge.
 
 ## Implementation
 
+```{r nFew, echo=FALSE}
+NFEW=20
+```
+
+Unlike my SVM document, I'm confident in my ability to explain how to implement the results in a technical fashion. There are a few wrinkles:
+
+* For neighbourhoods with "few" data points, do not produce an estimate as there is insufficient data to be confident in the results. A better definition of "few" should be decided in conjunction with stakeholders - I've used `r NFEW` as a starting point.
+
+```{r fewData}
+fewData <- trainData %>%
+  group_by( Neighborhood ) %>%
+  count() %>%
+  filter( n <= NFEW ) %>% 
+  arrange( n )
+
+knitr::kable( fewData, caption='Neighbourhoods with 10 or fewer data points. The model should not be used for these neighbourhoods as there are insufficient data.' )
+```
+
+* As communication regarding the model is of utmost importance, I've restructured the linear regression models to be a value at 500 square feet with associated slope rather than the intercept at zero. This is because the intercepts are sometimes negative and I don't want to try to explain that a 0 square foot house would have negative worth.
+
+```{r regCoef}
+# Create a function to parse a lmtree (i.e. modelparty) object into coefficients
+convertLMTree <- function( lmtreeObj ){
+  # Extract coefficients
+  treeCoef <- coef( lmtreeObj )
+  
+  # Note the coefficients will be different if there are multiple nodes
+  if( length( treeCoef ) == 2 ){
+    # Single node regression
+    dfOut <- data.frame( Node=1, Intercept=treeCoef[1], Slope=treeCoef[2] )
+    rownames( dfOut ) <- NULL
+  } else {
+    # Multiple nodes - data arranged with each node as a row
+    dfOut <- treeCoef %>%
+      # Convert to a data frame
+      as.data.frame() %>% 
+      # Save the node info
+      rownames_to_column( var='Node' ) %>%
+      # Convert rowname to numeric
+      mutate_at( 'Node', as.numeric )
+    # Change names...
+    names( dfOut ) <- c('Node', 'Intercept', 'Slope' )
+  }
+  # Return resulting data frame
+  return( dfOut )
+}
+
+neighborhoodCoef <- neighborhoodTrees %>% 
+  do( data.frame( Neighborhood=.$Neighborhood, convertLMTree( .$treeInfo ) ) )
+knitr::kable( neighborhoodCoef )
+```
+
 ## Monitoring
+
+
+
+## Education
+
 
 # Conclusions
 
