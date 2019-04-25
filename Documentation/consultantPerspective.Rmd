@@ -3,18 +3,30 @@ title: "House Prices from a Consultant's Perspective: Business"
 author: 'Craig "Doc" Savage'
 date: "`r Sys.Date()`"
 output: 
-  html_document:
-    code_folding: hide
+  html_document: 
+    toc: yes
+    toc_depth: 2
+    code_folding: show
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set( message=FALSE )
+
+## Constants
+# Benchmark RMSE
+OLD_RMSE = 0.4089
+# This algorithm's RMSE
+NEW_RMSE= 0.19382
+# Outlier house area
+OUTLIERSF = 7000
+# Threshold number of data points for a neighbourhood's model to be trusted
+NFEW=10
 ```
 
 # Executive Summary
 Kaggle kernels are very informative from a technical point of view. Indeed, much of the technical information contained in this kernel was inspired by others. However, in my professional opinion, the layout and contents of many kernels are inappropriate as formal documentation for engagements as a data science professional. As a start, most do not include an Executive Summary with a (very) brief overview of the document and a summary of the results.
 
-A hybrid model has been created to predict house prices. It results in a reduction of `r scales::percent( (0.4089 - 0.11879)/0.4089 )` in the error of predicting house prices.
+A hybrid model has been created to predict house prices. It results in a reduction of `r scales::percent( (OLD_RMSE - NEW_RMSE)/OLD_RMSE )` in the error of predicting house prices.
 
 By employing the model rather than manual valuations, we estimate savings of $\approx$ \$5000 per month, and a reduction in application timelines from a day to under an hour. *Note: Actually, it should be reduced to minutes or even seconds. But, if I were to say a reduction of that magnitude, would I be believed, or would it be seen as too good to be true? If I had the trust of the stakeholders, I'd say minutes.*
 
@@ -26,7 +38,7 @@ As this is for fun, that means I get to do unprofessional things like include an
 
 <!-- ![Picture: The cartoon character "Dick Dastardly" laughing with apparent mischievous intent.](https://media.giphy.com/media/25GN8GZ7KP3ZYnHgIJ/giphy.gif) -->
 
-# Introduction
+# Introduction{.tabset .tabset-fade .tabset-pills}
 
 My aim is to include extra information that has served me well in a professional consulting career, including:  
 
@@ -37,6 +49,9 @@ My aim is to include extra information that has served me well in a professional
 
 <!-- ![Picture: Barack Obama shrugging.](https://media.giphy.com/media/pPhyAv5t9V8djyRFJH/giphy.gif) -->
 
+This kernel should be read in conjunction with its "sister", "House Prices from a Consultant's Perspective: Support Vector Machines", in which I used an SVM to reach a lower RMSE but, in my opinion, is less likely to provide benefits to a client. The layout is the same and I've plagarised myself a substantial amount in these kernels.
+
+I've discussed this kernel and the other one on my YouTube channel if you'd like more information as to my thoughts and reasoning.
 
 ## Scope
 
@@ -46,12 +61,14 @@ Closer inspection will show the intent: the out-of-scope section sets boundaries
 
 Finally, I should note that these are only helpers in case of conflict surrounding this work. Difficult engagements may have a client demanding a piece of work, and may disregard the out-of-scope section even if they've formally approved the document. While such engagements have been rare, they do still happen, and dealing with those situations is one of the many skills that are useful as a professional data scientist.
 
+Finally, note that there are an average of roughly 50 house sales a month. If each sale requires a \$100 appraisal, then we'd save \$5000 a month, which was stated without derivation in the Executive Summary. Whether or not \$5000 a month is considered to be worth a data scientist's time will depend on your organisation.
+
 ### In Scope
 
 The work entails the following:
 
 * Data cleaning to account for missing variables.  
-* Construction of a support vector machine (SVM) regression model.  
+* Construction of a hybrid decision tree and linear regression model.  
 * Implementation instructions for the model, including test cases.  
 * Suggested monitoring information, including comparison to the existing model.  
 
@@ -60,7 +77,7 @@ The work entails the following:
 The work specifically does not entail the following:
 
 * External data not included in the received data sets (i.e. `train.csv` and `test.csv`).  
-* Use of algorithms other than SVM for a new model.  
+* Use of algorithms other than the hybrid decision tree and linear regression for a new model.  
 * The actual implementation, including data flows, source code, and any required testing.  
 * The prototype monitoring demonstrates information content and metrics that *may* be tracked. Modification of the display (e.g. colours, scales, etc) or incorporation into existing dashboards is out-of-scope.
 
@@ -69,12 +86,17 @@ The work specifically does not entail the following:
 * `tidyverse`: Load as a whole for simplicity. Data are loaded via `readr`, data wrangling is via `dplyr`, and graphs are via `ggplot2`.  
 * `partykit`: Hybrid models of decision trees and linear regression.
 * `magrittr`: Double pipe (`%<>%`): some people feel that assignment is important enough to break up but I like to use it for single-line `mutate` commands.
+* `scales`: Provides convience functions for printing percentages.
+* `RColorBrewer`: Colour palettes designed by professionals.
 
 ```{r libraryLoad}
 library( tidyverse )
 library( partykit )
 library( magrittr )
+library( scales )
+library( RColorBrewer )
 ```
+
 ## Data Load
 
 Four data files were provided, namely:  
@@ -113,11 +135,11 @@ Data cleaning here is rather mundane, and consists of populating missing values.
 cleanHousePriceData <- function( x ){
   y <- x %>%
     # For character variables, replace them with "NA" (text) as opposed to NA_character_
-    mutate_if( is.character, funs( if_else( is.na( . ), 'NA', . ) ) ) %>%
+    mutate_if( is.character, list( ~if_else( is.na( . ), 'NA', . ) ) ) %>%
     # For integers variables, replace them with 0L (i.e. integer 0) 
-    mutate_if( is.integer, funs( if_else( is.na( . ), 0L, . ) ) ) %>%
+    mutate_if( is.integer, list( ~if_else( is.na( . ), 0L, . ) ) ) %>%
     # Replace missing doubles with 0.0
-    mutate_if( is.double, funs( if_else( is.na( . ), 0.0, . ) ) ) %>%
+    mutate_if( is.double, list( ~if_else( is.na( . ), 0.0, . ) ) ) %>%
     # Convert all the characters to factors for SVM functionality
     mutate_if( is.character, as.factor )
   return( y )
@@ -134,49 +156,164 @@ Unlike the technical version of this document, discussing requirements with my "
 
 * **Explainable**: The existing model isn't trusted by frontline staff, so they ignore the outputs and order professional appraisals. These appraisals incur costs, both monetary and inconvenience to the customer as they await the results. Depending on your client organisation, you can try to "blind them with science" and point to the mathematical theory of support vector machines and the low RMSE, but I don't recommend it.
 
-<!-- Insert GIF of "Too much science" here -->
+<!-- ![Picture: Woman backing up from scientific bench with "Too much science" written as she does so. She then faints, and the text changes to "Can't handle the science"](https://media.giphy.com/media/plcoWBSrPvOP6/giphy.gif) -->
 
 * **Restricted variables**:The training data set contains over 80 variables. If model usage is onerous, then the staff may continue to ignore the model and order professional appraisals. Furthermore, many of the variables concern the condition or quality of various features; without training, estimation of such variables could be subjective or manipulated (e.g. "Everything is excellent! Can we approve the loan now?")
 
 * **Missing observed values**: This may seem odd for a Kaggle competition, where the aim is to predict values and compare them to observations. However, in this case, the goal is to *not* have observations. The primary product is for mortgage top-ups (also known as "refinances with cash out" or "home equity loans") where a customer is borrowing against the value of their house but does not intend to sell it. In theory, the customer borrows the additional funds and *continues to pay the mortgage without selling the house*. A sale price will only be realised if something goes awry. The valuation is still required for various internal purposes (e.g. accounting, regulatory compliance), so, once again, the *trust* in the model is paramount, leading back to the importance of **explainable**. 
+
 # Model Derivation
+
+Here, I diverge from my other kernel based on the constraints listed above:
+
+1. **Explainable**: I used a SVM in my other kernel but consider that to be inappropriate for explainability.
+
+2. **Variable Selection**: While it's tempting to throw in all independent variables, here I consider that to be inappropriate as well. As described above, entering 80+ variables might be seen as tedious to frontline staff and it's unclear how the qualitative variables would be estimated without hiring an expert. 
+
 
 ## Variable selection
 
+After browsing the variables, I decided to derive two: The total area of the house in square feet (dividing by 10 gives a good estimate in square metres if you prefer) and the modified number of bathrooms.
+
 ```{r mutateSplit}
 # Here's my use-case for the double pipe.
-fullData %<>%  mutate( TotalSF=GrLivArea + `1stFlrSF` + `2ndFlrSF` + TotalBsmtSF
-          , TotalBath=FullBath + 0.5*HalfBath )
+fullData %<>%  mutate( TotalSF=GrLivArea +  TotalBsmtSF
+                       , TotalBath=FullBath+0.5*HalfBath )
 # Separate back into training and test - that's why we have the Source variable. ;)
 trainData <- fullData %>% filter( Source=='Train' )
 testData <- fullData %>% filter( Source=='Test' )
 ```
 
+The variables I'll use need to be intuitive, so I have a list of:
+
+* Total Square Feet  
+* Lot Area  
+* Garage Cars  
+* Bedrooms Above Ground  
+* Total Bathrooms
+
 ## Hybrid models
 
-```{r modelDerivation}
-neighborhoodTrees <- trainData %>%
+For modelling, I'll combine two explainable algorithms: **Decision Trees** and **Linear Regression**. The `partykit` packagle makes this easy, once again becoming a one-line modelling procedure.
+
+I tried including `Neighborhood` as a decision tree variable but my computer didn't like a categorial variable with 25 levels, so I've instead grouped by `Neighborhood`. 
+
+Note the usage of `dplyr::do` here, enabling easy construction of models for each value of `Neighborhood`. Alternately, I've seen people use the `purrr` package to convert to a list and back but I'm less comfortable with `purrr`.
+
+```{r modelDerivation1}
+neighborhoodTrees1 <- trainData %>%
   group_by( Neighborhood ) %>%
   do( treeInfo=lmtree( SalePrice ~ TotalSF | LotArea +
                          GarageCars  +
-                         TotalBath + BedroomAbvGr +
-                         BldgType
+                         BedroomAbvGr +
+                         TotalBath 
                        , data=.
                        # Make alpha larger for more forgiving tree structure
                        , alpha=0.05
-                       , minsize=10
+                       , minsize=NFEW
                         )
     )
 
 ## Show one
-idx <- which( neighborhoodTrees$Neighborhood == 'CollgCr' )
-plot( neighborhoodTrees$treeInfo[[idx]] )
+idx <- which( neighborhoodTrees1$Neighborhood == 'Edwards' )
+plot( neighborhoodTrees1$treeInfo[[idx]] )
 ```
+
+The selection of the `Edwards` neighborhood isn't an accident: In preparing the Education section, I came across this great example which I'll cover in more detail.
+
+From the `plot` of the `lmtree`, the rightmost node has a few outliers. Ignoring them for the moment, we can calculate the RMSE metric on our training data.
+
+```{r predFunction}
+predFromTree <- function( newTrees, newData ){
+  augmentedData <- newData
+  
+  for( thisNeighborhood in unique( newTrees$Neighborhood ) ){
+    dataIdx <- which( newData$Neighborhood == thisNeighborhood, arr.ind=TRUE )
+    treeIdx <- which( newTrees$Neighborhood == thisNeighborhood, arr.ind=TRUE )
+    
+    augmentedData[dataIdx,'predPrice'] <- predict( 
+      newTrees$treeInfo[[treeIdx]]
+      , newdata=newData[dataIdx,]
+      , type='response' )
+    
+    augmentedData[dataIdx,'nodeID'] <- predict( 
+      newTrees$treeInfo[[treeIdx]]
+      ,newdata=newData[dataIdx,]
+      , type='node' )
+  }
+  return( augmentedData )
+}
+calcLogRMSE <- function( modelData ){
+  logRMSE <- with( modelData, sqrt( mean( log( SalePrice/predPrice )^2 ) ) )
+  return( logRMSE )
+}
+## Generate predictions
+predTrain1 <- predFromTree( neighborhoodTrees1, trainData )
+## Calc logRMSE
+logRMSE1 <- calcLogRMSE( predTrain1 )
+```
+
+The RMSE value, without removing the outliers, is thus `r round( logRMSE1, 4 )`. But here all data scientists have a dilemma: *What should be done about the outliers?*. While everyone will have their own opinions, let's start by removing them and see if there's a "substantial" difference.
+
+```{r modelDerivation2}
+neighborhoodTrees2 <- trainData %>%
+  # Omitting outliers
+  filter( TotalSF < OUTLIERSF ) %>%
+  group_by( Neighborhood ) %>%
+  do( treeInfo=lmtree( SalePrice ~ TotalSF | LotArea +
+                         GarageCars  +
+                         BedroomAbvGr +
+                         TotalBath 
+                       , data=.
+                       # Make alpha larger for more forgiving tree structure
+                       , alpha=0.05
+                       , minsize=NFEW
+                        )
+    )
+
+## Show one
+idx <- which( neighborhoodTrees2$Neighborhood == 'Edwards' )
+plot( neighborhoodTrees2$treeInfo[[idx]] )
+```
+
+Note that the tree structure has changed after removing the outliers - both in the number of splits and the first split variable. If we calculate the RMSE of the full training data:
+
+```{r logRMSE2, warning=FALSE, message=FALSE}
+predTrain2 <- predFromTree( neighborhoodTrees2, trainData )
+logRMSE2 <- calcLogRMSE( predTrain2 )
+```
+
+...then we have a new RMSE value of `r round( logRMSE2, 4 )`.
+
+This is an excellent chance for me to comment on model fits and their usage for future data. As you can see, filtering outliers based on area has changed the model structure for this neighborhood, and has increased the metric for training data in the Kaggle competition. The question is: Will this fit be more illustrative for *future* data? If so, I should use the model with the higher (worse) metric for my competition submission. Should I experiment with different settings for what constitutes an "outliear" based on the histogram of the metric:
+
+```{r histSF}
+plotSF <- ggplot() +
+  geom_histogram( data=trainData, aes( x=TotalSF, fill='Train' )
+                  , binwidth=250, position='identity', alpha=0.6 ) +
+  geom_histogram( data=testData, aes( x=TotalSF, fill='Test' )
+                  , binwidth=250, position='identity', alpha=0.6 ) +
+  scale_fill_brewer( 'Data Source', palette='Paired' ) +
+  theme( legend.position='bottom' ) +
+  labs( x='House Area'
+        , y='Count'
+        , title='Comparison of house sizes between training and test data' )
+
+plotSF
+```
+
+Consulting the plot, there appear to be more outliers in the Training data than the Test data. If I wanted to try to optimise my Kaggle score, I'd use the distribution of the Test data to help determine a threshold[^2].
+
+[^2]: I consider this to be intellectually dishonest: Use of your test data to improve your model goes against the philospohy of test data. Alas, that's one of the tricks you need to use to win Kaggle challenges....
+
+Of course, investigating outliers in one variable may lead to questions about whether there are outliers in other variables, which leads to what should define an "outlier" in those variables, and the process continues. More information on these points will be presented for your consideration in the Implementation section.
+
 
 # Predictions
 
+A function to calculate the predictions was created earlier - I've chosen to implement the one which excludes outliers based on the total area of the house.
 
-```{r predictions}
+```{r predictions, warning=FALSE, message=FALSE}
 # Augmented the data with the tree structure and predictions
 # I'm not sure why the following doesn't work...
 # augmentedTrainData <- trainData %>%
@@ -187,51 +324,16 @@ plot( neighborhoodTrees$treeInfo[[idx]] )
 #           , nodeID=predict( treeInfo[[1]] # Take the first one in each group
 #                 , newdata=., type='node' )  )
 
-# Initialise
-augmentedTrainData <- trainData %>%
-  mutate( predPrice=NA_real_
-          , nodeID=NA_integer_ )
-
-augmentedTestData <- testData %>%
-  mutate( predPrice = NA_real_
-          , nodeID=NA_integer_ )
-
-# Loop through each neighborhood
-for( thisNeighborhood in unique( neighborhoodTrees$Neighborhood ) ){
-  trainIdx <- which( trainData$Neighborhood == thisNeighborhood, arr.ind=TRUE )
-  testIdx <- which( testData$Neighborhood==thisNeighborhood, arr.ind=TRUE )
-  treeIdx <- which( neighborhoodTrees$Neighborhood == thisNeighborhood, arr.ind=TRUE )
-
-  augmentedTrainData[trainIdx,'predPrice'] <- predict( 
-    neighborhoodTrees$treeInfo[[treeIdx]]
-    , newdata=trainData[trainIdx,]
-    , type='response' )
-  
-  augmentedTrainData[trainIdx,'nodeID'] <- predict( 
-    neighborhoodTrees$treeInfo[[treeIdx]]
-    ,newdata=trainData[trainIdx,]
-    , type='node' )
-  
-  augmentedTestData[testIdx,'predPrice'] <- predict(
-    neighborhoodTrees$treeInfo[[treeIdx]]
-    ,newdata=testData[testIdx,]
-    , type='response' )
-
-  augmentedTestData[testIdx,'nodeId'] <- predict(
-    neighborhoodTrees$treeInfo[[treeIdx]]
-    ,newdata=testData[testIdx,]
-    , type='node' )
-  
-}
-  
+augmentedTrainData <- predFromTree( neighborhoodTrees2, trainData )
+augmentedTestData <- predFromTree( neighborhoodTrees2, testData )
 
 predPlot <- ggplot( augmentedTrainData
                      , aes( x=predPrice
                             , y=SalePrice
                             , colour=as.factor( nodeID ) ) ) +
-  geom_point( ) + 
-  geom_abline( slope = 1, intercept = 0 ) +
-  scale_colour_brewer( type = 'qual', guide=guide_legend( 'Node' ) ) +
+  geom_point( alpha=0.6 ) + 
+  geom_abline( slope = 1, intercept = 0, linetype=3 ) +
+  scale_colour_brewer( palette='Set1', guide=guide_legend( 'Node' ) ) +
   labs( x='Predicted'
         , y='Observed'
         , title='Assessment of training data'
@@ -255,7 +357,7 @@ distPlot <- ggplot( mapping=aes( x=predPrice ) ) +
                  ,aes( x=predPrice, fill='Train')
                  ,bins=30,alpha=0.6 ) + 
   scale_fill_brewer( type='qual'
-                     , palette='Dark2'
+                     , palette='Set1'
                      , guide=guide_legend( 'Price Source' ) ) + 
   labs( x='Price'
         , y='Count'
@@ -265,15 +367,26 @@ distPlot <- ggplot( mapping=aes( x=predPrice ) ) +
 distPlot + scale_x_log10()
 ```
 
-Output the predictions for scoring:
+There are some outlier scores, under \$100,000. Should the model predict them, or are they outliers? The model does make some predictions in that range, but *should* it? Or should such small prices be flagged for manual evaluation?  
 
-```{r csvOut}
+
+Output the predictions for scoring purposes:
+
+```{r csvOut, echo=TRUE, eval=FALSE}
 submissionData <- augmentedTestData %>%
   select( Id, predPrice ) %>%
   rename( SalePrice=predPrice )
 
 write.csv( submissionData, file='lmtree_submission.csv', row.names = FALSE )
 ```
+
+This received a Kaggle score of `r NEW_RMSE`. By comparison, the model excluding outliers received a score of `0.20013`. This is another example of a common occurance in my experience: You can do a great deal of work and discussions as to whether one model is better than another, yet the difference in performance is only `r scales::percent( abs( 1-0.20013/NEW_RMSE ) )`.
+As including the outliers lowers the RMSE, this implies that such outliers exist in the hidden test set. If I were trying to optimise my Kaggle score, I'd use this information to optimise my score. However, from a consultant perspective, the same questions about how to deal with outliers apply here:  
+
+1. Should I exclude them and default to manual processes?     
+2. Should I employ a different process for a small number of cases?   
+3. What is the business impact of optimising around my Kaggle score? On the one hand, there may be an identifiable, distinct segment for better modelling; on the other, it may be that these are anomalies and unidentifiable. There are few numbers here so statistics might not help - what should be done?
+
 
 # Recommendations{.tabset .tabset-fade .tabset-pills}
 
@@ -287,10 +400,6 @@ I have three groups of recommendations:
 
 ## Implementation
 
-```{r nFew, echo=FALSE}
-NFEW=20
-```
-
 Unlike my SVM document, I'm confident in my ability to explain how to implement the results in a technical fashion. There are a few wrinkles:
 
 * For neighbourhoods with "few" data points, do not produce an estimate as there is insufficient data to be confident in the results. A better definition of "few" should be decided in conjunction with stakeholders - I've used `r NFEW` as a starting point.
@@ -302,10 +411,12 @@ fewData <- trainData %>%
   filter( n <= NFEW ) %>% 
   arrange( n )
 
-knitr::kable( fewData, caption='Neighbourhoods with 10 or fewer data points. The model should not be used for these neighbourhoods as there are insufficient data.' )
+knitr::kable( fewData, caption='Neighbourhoods with "few" data points. The model should not be used for these neighbourhoods as there are insufficient data.' )
 ```
 
-* As communication regarding the model is of utmost importance, I've restructured the linear regression models to be a value at 500 square feet with associated slope rather than the intercept at zero. This is because the intercepts are sometimes negative and I don't want to try to explain that a 0 square foot house would have negative worth.
+Similarly, if there are exclusions for outliers, they can be included here as well. As an example, I've excluded houses with an area over `r OUTLIERSF` square feet. As part of the model implementation, this would need to be stressed.
+
+* As communication regarding the model is of utmost importance, I've restructured the linear regression models to be a value at a median size with associated slope rather than the intercept at zero. This is because the intercepts are sometimes negative and I don't want to try to explain that a 0 square foot house would have negative worth.
 
 ```{r regCoef}
 # Create a function to parse a lmtree (i.e. modelparty) object into coefficients
@@ -333,19 +444,235 @@ convertLMTree <- function( lmtreeObj ){
   # Return resulting data frame
   return( dfOut )
 }
+## Compute the median size for each terminal node, as well as the number of data points
+sizeReference <- augmentedTrainData %>%
+  group_by( Neighborhood, nodeID ) %>%
+  summarise( MedianSF=median( TotalSF ), N=n() )
 
-neighborhoodCoef <- neighborhoodTrees %>% 
-  do( data.frame( Neighborhood=.$Neighborhood, convertLMTree( .$treeInfo ) ) )
-knitr::kable( neighborhoodCoef )
+neighborhoodCoef <- neighborhoodTrees2 %>% 
+  do( data.frame( Neighborhood=.$Neighborhood, convertLMTree( .$treeInfo ) ) ) %>%
+  inner_join( sizeReference, by=c('Neighborhood'='Neighborhood', 'Node'='nodeID') ) %>%
+  mutate( BasePrice=if_else( is.na( Slope ), Intercept, Intercept + Slope*MedianSF ) ) %>%
+  select( Neighborhood, Node, N, MedianSF, BasePrice, Slope )
+
 ```
+
+Note that a minority of the neighborhoods have something more than a linear model. To make that easier for staff, I'd expand the `Node` column with the derivation. There might be a way to extract that automatically, but I've done so manually.
+
+```{r nodeMap, warning=FALSE, message=FALSE}
+# Create map of Neighborhood | Node | Rule(s)
+# Helper function
+createNeighborhoodRow <- function( neighborhoodName, nodeID, reason ){
+  tempDF <- data.frame( Neighborhood=neighborhoodName
+                        , Node=nodeID
+                        , Rule=reason
+                        )
+  return( tempDF )
+}
+collgCr2 <- createNeighborhoodRow('CollgCr', 2, '2 or Fewer Bedrooms')
+collgCr5 <- createNeighborhoodRow('CollgCr', 5, '3+ Bedrooms, 2 or Fewer Bathrooms, 2 or Fewer Car Garage')
+collgCr6 <- createNeighborhoodRow('CollgCr', 6, '3+ Bedrooms, 2 or Fewer Bathrooms, 3+ Car Garage' )
+collgCr7 <- createNeighborhoodRow('CollgCr', 7, '3+ Bedrooms, More than 2 Bathrooms' )
+edwards3 <- createNeighborhoodRow('Edwards', 3, 'LotArea under 12108, 1 Car Garage or Fewer')
+edwards4 <- createNeighborhoodRow('Edwards', 4, 'LotArea under 12108, More than 1 Car Garage' )
+edwards5 <- createNeighborhoodRow('Edwards', 5, 'LotArea over 12108' )
+brkSide2 <- createNeighborhoodRow('BrkSide', 2, 'LotArea under 7015')
+brkSide3 <- createNeighborhoodRow('BrkSide', 3, 'LotArea over 7015' )
+gilbert2 <- createNeighborhoodRow('Gilbert', 2, 'LotArea 14859 or under' )
+gilbert3 <- createNeighborhoodRow('Gilbert', 3, 'LotArea over 14859' )
+mitchel2 <- createNeighborhoodRow('Mitchel', 2, '2 or fewer Bedrooms')
+mitchel3 <- createNeighborhoodRow('Mitchel', 3, 'More than 2 Bedrooms' )
+nAmes2 <- createNeighborhoodRow( 'NAmes', 2, 'LotArea under 13560' )
+nAmes3 <- createNeighborhoodRow('NAmes', 3, 'LotArea over 13560')
+nwAmes2 <- createNeighborhoodRow('NWAmes', 2, '2 or Fewer Bathrooms' )
+nwAmes3 <- createNeighborhoodRow('NWAmes', 3, 'More than 2 Bathrooms')
+oldTown2 <- createNeighborhoodRow('OldTown', 2, 'LotArea under 11340' )
+oldTown3 <- createNeighborhoodRow('OldTown', 3, 'LotArea over 11340' )
+
+neighborhoodMap <- bind_rows( collgCr2
+                              , collgCr5
+                              , collgCr6
+                              , collgCr7
+                              , edwards3
+                              , edwards4
+                              , brkSide2
+                              , brkSide3
+                              , gilbert2
+                              , gilbert3
+                              , mitchel2
+                              , mitchel3
+                              , nAmes2
+                              , nAmes3
+                              , nwAmes2
+                              , nwAmes3
+                              , oldTown2
+                              , oldTown3 )
+
+neighborhoodCoef1 <- left_join( neighborhoodCoef, neighborhoodMap, by=c('Neighborhood', 'Node' ) ) %>%
+  select( Neighborhood, Rule, N, MedianSF, BasePrice, Slope ) %>%
+  replace_na( list( Rule='All' ) ) %>%
+  mutate( Rule=if_else( N <= NFEW, 'Manual', Rule ) )
+
+knitr::kable( neighborhoodCoef1
+              , caption='Reference data for frontline staff: Each node has a median sized house with a price with larger/smaller houses modified by Slope'
+              , digits=0 )
+```
+
+Note that it took me longer to type out all of those reasons than to do all the analysis. As much as data scientist stories are about doing all the fancy math, converting results to documentation may constitute the majority of your time.
 
 ## Monitoring
 
+In light of the "No Sales Price" constraint, the monitoring here is more nuanced than standard Kaggle challenges. While a RMSE-type metric is still advisable, there are some other metrics that should be tracked. In my opinion, these include:
+
+1. **Fraction Appraised**: The goal of model development is for its usage to replace professional appraisals. Thus, the first metric is *What fraction of valuations are done by the model, rather than professional appraisals?*. 
+
+2. **Appraisal Comparison**: Of the houses that were appraised, *What is the RMSE between the appraisal value and the model value?*
+
+3. **Quality Distribution**: As the goal is to remove professional opinion on quality, there is a risk that poor quality houses will find undue valuations from our model. The distribution of quality from an audit sample of houses valued by the model.
+
+4. **Cost Savings**: In conjunction with the fraction appraised, the cost savings should be recorded, because a low RMSE might excite data scientists, but cost savings excite managers! And excited managers hire more data scientists.
+
+### Monitoring Plots
+
+First, let's consider a retrospective history of model performance, of both the baseline model and the hybrid models. Of course, this means I first need to reproduce the baseline model from the Kaggle competition, as I'm considering that to be my "Old Model".
+
+#### Old Model
+
+I've assumed that the linear model described as the source of `sample_submission.csv` is the existing model. I'll be comparing the new model to this to demonstrate the improvement relative to the "baseline" model.
+
+Of course, that means I first need to implement and test this model.
+
+```{r oldModel}
+# The sample_submission.csv is said to be a linear model with 4 variables...
+oldModel <- lm( SalePrice ~ YrSold + MoSold + LotArea + BedroomAbvGr, data=augmentedTrainData )
+# Record training data
+augmentedTrainData$oldPredPrice <- fitted( oldModel )
+# And test data
+augmentedTestData$oldPredPrice <- predict( oldModel, newdata=augmentedTestData )
+# To check model, the predTestData should match the submissionData
+checkData <- readr::read_csv( '../Input/sample_submission.csv' )
+# Join sample_submission to our calculation....
+checkSummary <- checkData %>%
+  inner_join( augmentedTestData %>% select( Id, oldPredPrice ), by='Id' ) %>%
+  # Check match...
+  summarise( maxAbsDiff=max( abs( oldPredPrice - SalePrice ) )
+             , meanAbsDiff=mean( abs( oldPredPrice - SalePrice ) ) )
+```
+
+The average difference between the sample submission and my reproduction is `r checkSummary$meanAbsDiff`, with a maximal absolute difference of `r checkSummary$maxAbsDiff`. This is sufficiently close that I've concluded that the model has been reproduced. 
+
+```{r timePlots}
+# Make a function to calculate the metric
+calcLogRMSE <- function( y1, y2 ){
+  logRMSE <- sqrt( mean( (log( y1 ) - log( y2 ) )^2 ) )
+  return( logRMSE )
+}
+
+# Summarise the data by Date (Month and Year)
+timePlotData <- augmentedTrainData %>%
+  # lubridate can handle the messy data (e.g. 2010-7-01)
+  mutate( Date=lubridate::ymd( paste( YrSold, MoSold, '01', sep='-' ) ) ) %>%
+  group_by( Date ) %>%
+  # Collect summary metrics
+  summarise( N=n()
+             , oldMetric=calcLogRMSE( SalePrice, oldPredPrice )
+             , newMetric=calcLogRMSE( SalePrice, predPrice ) )
+
+# Build the plot
+timePlot <- ggplot( data=timePlotData ) +
+  geom_point( aes( x=Date, y=oldMetric, colour='Linear', size=N, shape='Linear' ) ) +
+  geom_point( aes( x=Date, y=newMetric, colour='Hybrid', size=N, shape='SVM' ) ) + 
+  geom_line( aes( x=Date, y=oldMetric, colour='Linear' ) ) +
+  geom_line( aes( x=Date, y=newMetric, colour='Hybrid' ) ) + 
+  scale_colour_brewer( type='qual' ) +
+  # Only use the month and year for date labels
+  scale_x_date( date_labels = '%b-%Y' ) +
+  # Merge the guides for colour and shape
+  guides( colour=guide_legend( 'Model' ), shape=guide_legend( 'Model' ) ) +
+  labs( x='Date', y='RMSE'
+        , title='Example potential monitoring of house price prediction model performance'
+        , subtitle='RMSE of log( Price ) metric' ) +
+  theme( legend.position='bottom' )
+
+timePlot
+```
+
+Note that here there are some odd months, where the hybrid model performed worse than the baseline model. Overall, however, the hybrid performs better. This indicates that it's possible (though unlikely) for future months, the new/hybrid model may underperform.
+
+Check the distribution of residuals:
+
+```{r residPlot}
+residPlotData <- augmentedTrainData %>% 
+  select( Id, SalePrice, oldPredPrice, predPrice ) %>%
+  mutate( oldDelta=log( oldPredPrice/SalePrice )
+          , newDelta=log( predPrice/SalePrice ) )
+
+residPlot <- ggplot( residPlotData ) +
+  geom_histogram( aes( x=oldDelta, fill='Linear' ), bins=30, alpha=0.6 ) +
+  geom_histogram( aes( x=newDelta, fill='SVM' ), bins=30, alpha=0.6 ) +
+  scale_fill_brewer( type='qual' ) + 
+  labs( x='Error: log( Predicted / Actual )', y='Count'
+        , title='Distribution of residuals for Linear and Hybrid models' ) +
+  guides( fill=guide_legend( 'Model' ) ) +
+  theme( legend.position='bottom' )
+
+residPlot
+```
+
+Overall, the residuals are smaller for the hybrid model, with a larger concentration in the smallest error bin. 
+
+Finally, I've chosen a random sample of my results to be used as test cases against an implementation.
+
+```{r testCases}
+testTrain <- augmentedTrainData %>%
+  # Grab the Id and predictions only, to save space
+  select( Id, oldPredPrice, predPrice ) %>%
+  # How many is "enough"? I've taken 10.
+  sample_n( 10 ) 
+
+knitr::kable( testTrain, caption='Example test cases from training data.' )
+```
 
 
 ## Education
 
+If you contrast this article with my technical one, you'll note that this section isn't present in the technical version. It wasn't an omission: educating frontline staff about the inner workings of an SVM wasn't necessary (and possibly infeasible). However, in this case, it seems that stakeholder buy-in is necessary for success. For this reason, I'm including a section on how to explain the model to frontline staff and provide guidance for potentially including any feedback received.
+
+The models have been organised by Neighborhood which, in banking terminology, will be related to a branch network or geography. For each branch, the specific model for that neighborhood will be briefed as a decision tree (where applicable) as well as a median price and a price per square foot adjustment for a house relative to the median.
+
+It's possible that there will be resistance to the decision trees - either that one should be necessary when it wasn't presented, or that a different tree should have been made (e.g. partition by number of bedrooms rather than garage size). Even if it's not statistically optimal, such adjustments should be investigated and if there is no practical difference in results, then the frontline proposal should be accepted. While that purist statisticians and data scientists might object, I advocate doing this because, as I've explained my position previously, *frontline staff adoption is more important than statistical metrics*. 
+
 
 # Conclusions
 
-## Data
+I've tried to include information that I've found useful as a professional data science consultant. I've also tried to emphasise an important part of being a data scientist: You should take opportunities to have fun with your work. 
+
+<!-- ![Picture: Snoopy and Woodstock from the cartoon "Peanuts" dancing together.](https://media.giphy.com/media/3ornjX5H61CKdFonks/giphy.gif) -->
+
+On a more serious note, I do encourage you to try to consider the business needs of data science, what the business impact will be (in terms of dollars rather than reduction of RSME). 
+
+As a reminder, this is meant to be read in conjunction with my other kernel, "House Prices from a Consultant's Perspective: Support Vector Machines", which achieves a lower RMSE (and, hence, higher Kaggle ranking) but is, in my opinion, less likely to be of value to a client organisation.
+
+# Acknowledgements
+
+In building this, I'd like to thank the following:
+
+0. Myself, for my other kernel "House Prices from a Consultant's Perspective: Support Vector Machines" from which much of the text is plagarised.
+
+1. [Kaggle](https://www.kaggle.com), for hosting the data and the [open competition](https://www.kaggle.com/c/house-prices-advanced-regression-techniques).
+
+2. Dean De Cock for [sharing the collected house price data](http://jse.amstat.org/v19n3/decock.pdf).
+
+3. Chris Murray for his discussions on business reasons to model house prices.
+
+4. giphy.com for making animated GIFs for extra pizzazz in this kernel.
+
+# Appendix
+
+## Session Info
+
+The `sessionInfo()` used in the creation of this document is below. It's a place to start if there are difficulties reproducing this report (i.e. check `R` version, package versions, etc.).
+
+```{r sessionInfo}
+sessionInfo()
+```
