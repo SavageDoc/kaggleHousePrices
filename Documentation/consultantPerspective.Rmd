@@ -40,6 +40,8 @@ As this is for fun, that means I get to do unprofessional things like include an
 
 # Introduction{.tabset .tabset-fade .tabset-pills}
 
+The aim of this kernel is to provide an example template for reporting results. Along the way, I've utilised a hybrid decision tree/linear regression model (via the R package, `partykit`) to fit the data. 
+
 My aim is to include extra information that has served me well in a professional consulting career, including:  
 
 * Explicitly calling out the scope, including things that are out-of-scope.  
@@ -61,7 +63,7 @@ Closer inspection will show the intent: the out-of-scope section sets boundaries
 
 Finally, I should note that these are only helpers in case of conflict surrounding this work. Difficult engagements may have a client demanding a piece of work, and may disregard the out-of-scope section even if they've formally approved the document. While such engagements have been rare, they do still happen, and dealing with those situations is one of the many skills that are useful as a professional data scientist.
 
-Finally, note that there are an average of roughly 50 house sales a month. If each sale requires a \$100 appraisal, then we'd save \$5000 a month, which was stated without derivation in the Executive Summary. Whether or not \$5000 a month is considered to be worth a data scientist's time will depend on your organisation.
+Note that there are an average of roughly 50 house sales a month. If each sale requires a \$100 appraisal, then we'd save \$5000 a month, which was stated without derivation in the Executive Summary. Whether or not \$5000 a month is considered to be worth a data scientist's time will depend on your organisation. At any rate, if our model is such that we can remove the need for manual valuations, then we can claim savings for our sponsors.
 
 ### In Scope
 
@@ -156,7 +158,7 @@ Unlike the technical version of this document, discussing requirements with my "
 
 * **Explainable**: The existing model isn't trusted by frontline staff, so they ignore the outputs and order professional appraisals. These appraisals incur costs, both monetary and inconvenience to the customer as they await the results. Depending on your client organisation, you can try to "blind them with science" and point to the mathematical theory of support vector machines and the low RMSE, but I don't recommend it.
 
-<!-- ![Picture: Woman backing up from scientific bench with "Too much science" written as she does so. She then faints, and the text changes to "Can't handle the science"](https://media.giphy.com/media/plcoWBSrPvOP6/giphy.gif) -->
+<!-- ![Picture: Woman backing up from scientific bench with "Too much science" written as she does so. She then faints, and the text changes to "Can't handle the science"](https://media.giphy.com/media/plcoWBSrPvOP6/giphy.gif)  -->
 
 * **Restricted variables**:The training data set contains over 80 variables. If model usage is onerous, then the staff may continue to ignore the model and order professional appraisals. Furthermore, many of the variables concern the condition or quality of various features; without training, estimation of such variables could be subjective or manipulated (e.g. "Everything is excellent! Can we approve the loan now?")
 
@@ -171,7 +173,7 @@ Here, I diverge from my other kernel based on the constraints listed above:
 2. **Variable Selection**: While it's tempting to throw in all independent variables, here I consider that to be inappropriate as well. As described above, entering 80+ variables might be seen as tedious to frontline staff and it's unclear how the qualitative variables would be estimated without hiring an expert. 
 
 
-## Variable selection
+## Variable Selection
 
 After browsing the variables, I decided to derive two: The total area of the house in square feet (dividing by 10 gives a good estimate in square metres if you prefer) and the modified number of bathrooms.
 
@@ -520,7 +522,29 @@ knitr::kable( neighborhoodCoef1
 
 Note that it took me longer to type out all of those reasons than to do all the analysis. As much as data scientist stories are about doing all the fancy math, converting results to documentation may constitute the majority of your time.
 
+
+The implementation of the SVM is straightforward in an `R` environment, as demonstrated by the above code. Furthermore, we can collect a sample of results to be used as test cases.
+
+```{r testCases}
+testTrain <- augmentedTrainData %>%
+  # Grab the Id and predictions only, to save space
+  select( Id, predPrice ) %>%
+  # How many is "enough"? I've taken 10.
+  sample_n( 10 ) 
+
+knitr::kable( testTrain, caption='Example test cases from training data.' )
+```
+
+
 ## Monitoring
+
+Upon delivering the model and its implementation to the client, I like to provide some metrics for the client to have assurance that the model is working correctly. Again, using the training data, it's easy to produce some metrics and a time-series of retrospective model performance.
+
+I consider two plots:  
+1. A retrospective view of model performance. I'd prefer to do this with test data, but, alas, we don't have truth from Kaggle regarding the test data. This provides an indication for a range of "normal" performance.    
+2. A histogram of the residuals. As the metric is RSME of the logarithm of house price predictions, I'm using $\log( \frac{\hat{p}}{p} )$, being the log of the ratio of the predicted price, $\hat{p}$, and actual price, $p$. This provides a remedial measure of model performance.
+
+Of course, you or the client might have other ideas for what information is "best" to have confidence the model is working correctly. It's ideal if there is a mature, trusted monitoring suite into which our new model can be implemented. However, this may not always be the case.
 
 In light of the "No Sales Price" constraint, the monitoring here is more nuanced than standard Kaggle challenges. While a RMSE-type metric is still advisable, there are some other metrics that should be tracked. In my opinion, these include:
 
@@ -532,13 +556,9 @@ In light of the "No Sales Price" constraint, the monitoring here is more nuanced
 
 4. **Cost Savings**: In conjunction with the fraction appraised, the cost savings should be recorded, because a low RMSE might excite data scientists, but cost savings excite managers! And excited managers hire more data scientists.
 
-### Monitoring Plots
+### Old Model
 
-First, let's consider a retrospective history of model performance, of both the baseline model and the hybrid models. Of course, this means I first need to reproduce the baseline model from the Kaggle competition, as I'm considering that to be my "Old Model".
-
-#### Old Model
-
-I've assumed that the linear model described as the source of `sample_submission.csv` is the existing model. I'll be comparing the new model to this to demonstrate the improvement relative to the "baseline" model.
+I've assumed that the linear model described as the source of `sample_submission.csv` is the existing model. I'll be comparing the hybrid model to this to demonstrate the improvement relative to the "baseline" model.
 
 Of course, that means I first need to implement and test this model.
 
@@ -561,6 +581,15 @@ checkSummary <- checkData %>%
 
 The average difference between the sample submission and my reproduction is `r checkSummary$meanAbsDiff`, with a maximal absolute difference of `r checkSummary$maxAbsDiff`. This is sufficiently close that I've concluded that the model has been reproduced. 
 
+
+### Monitoring Plots
+
+First, let's consider a retrospective history of model performance, of both the baseline model and the hybrid models. 
+
+#### Historical Comparison
+
+We consider a retrospective comparison of the old model and the hybrid. Recall that there are neighbourhoods with "few" data points and "large" houses are excluded from our modelling population. Going forward, it is assumed that the model will be assessed every month.
+
 ```{r timePlots}
 # Make a function to calculate the metric
 calcLogRMSE <- function( y1, y2 ){
@@ -572,6 +601,10 @@ calcLogRMSE <- function( y1, y2 ){
 timePlotData <- augmentedTrainData %>%
   # lubridate can handle the messy data (e.g. 2010-7-01)
   mutate( Date=lubridate::ymd( paste( YrSold, MoSold, '01', sep='-' ) ) ) %>%
+  # Remove outlier houses
+  filter( TotalSF < OUTLIERSF ) %>%
+  # Exclude neighborhoods with few data points
+  anti_join( fewData, by='Neighborhood' ) %>%
   group_by( Date ) %>%
   # Collect summary metrics
   summarise( N=n()
@@ -597,9 +630,25 @@ timePlot <- ggplot( data=timePlotData ) +
 timePlot
 ```
 
-Note that here there are some odd months, where the hybrid model performed worse than the baseline model. Overall, however, the hybrid performs better. This indicates that it's possible (though unlikely) for future months, the new/hybrid model may underperform.
+Note that here there is a single month where the hybrid model performed about the same as the baseline model. Overall, however, the hybrid performs better. This indicates that it's possible (though unlikely) for future months, the new/hybrid model may underperform.
 
-Check the distribution of residuals:
+I can use this to guess the model performance on the private test data: I expect my results to be between 0.1 and 0.2, but I won't be flabbergasted if it comes back as 0.3.
+
+
+I'll also provide some of the data to serve as test cases that the implementation of monitoring is correct.
+
+```{r timeTests}
+timeTestData <- timePlotData %>%
+  # Grab 5 months
+  sample_n( 5 )
+
+knitr::kable( timeTestData 
+              , digits=4 
+              , caption='Example results from prototype monitoring.'
+              , col.names=c('Date', 'Number', 'Old RMSE', 'New RMSE' ) )
+```
+
+Secondly, I'd recommend building a histogram of the residuals. This might be best if it were done monthly as well, but I've taken them all to show greater numbers. What would the client prefer?
 
 ```{r residPlot}
 residPlotData <- augmentedTrainData %>% 
@@ -609,7 +658,7 @@ residPlotData <- augmentedTrainData %>%
 
 residPlot <- ggplot( residPlotData ) +
   geom_histogram( aes( x=oldDelta, fill='Linear' ), bins=30, alpha=0.6 ) +
-  geom_histogram( aes( x=newDelta, fill='SVM' ), bins=30, alpha=0.6 ) +
+  geom_histogram( aes( x=newDelta, fill='Hybrid' ), bins=30, alpha=0.6 ) +
   scale_fill_brewer( type='qual' ) + 
   labs( x='Error: log( Predicted / Actual )', y='Count'
         , title='Distribution of residuals for Linear and Hybrid models' ) +
@@ -621,17 +670,22 @@ residPlot
 
 Overall, the residuals are smaller for the hybrid model, with a larger concentration in the smallest error bin. 
 
-Finally, I've chosen a random sample of my results to be used as test cases against an implementation.
+As before, we can sample some residuals to serve as test cases.
 
-```{r testCases}
-testTrain <- augmentedTrainData %>%
-  # Grab the Id and predictions only, to save space
-  select( Id, oldPredPrice, predPrice ) %>%
-  # How many is "enough"? I've taken 10.
-  sample_n( 10 ) 
+```{r residTest}
+residTestData <- residPlotData %>%
+  # I could set a seed first to ensure the same 10 are always generated....
+  # But I don't really care which I sample.
+  sample_n( 10 )
 
-knitr::kable( testTrain, caption='Example test cases from training data.' )
+knitr::kable( residTestData
+              , digits=4
+              , caption='Example test cases for residual calculation'
+              , col.names=c('ID', 'Observed Price', 'Old Model', 'New Model'
+                            , 'Old Log( Ratio )', 'New Log( Ratio )' ) )
 ```
+
+Note that it's likely that we'll be able to select an *individual* case where the new model performs worse than the old model. It's another conversation that can test your ability as a data scientist. 
 
 
 ## Education

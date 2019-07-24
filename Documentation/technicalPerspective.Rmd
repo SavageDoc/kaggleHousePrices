@@ -33,7 +33,7 @@ I had every intention of writing this in a serious tone. However, I write enough
 
 As this is for fun, that means I get to do unprofessional things like include animated GIFs in my report. Thus:
 
-![Picture: The cartoon character "Dick Dastardly" laughing with apparent mischievous intent.](https://media.giphy.com/media/25GN8GZ7KP3ZYnHgIJ/giphy.gif)
+<!-- ![Picture: The cartoon character "Dick Dastardly" laughing with apparent mischievous intent.](https://media.giphy.com/media/25GN8GZ7KP3ZYnHgIJ/giphy.gif) -->
 
 # Introduction{.tabset .tabset-fade .tabset-pills}
 
@@ -46,7 +46,7 @@ My aim is to include extra information that has served me well in a professional
 * Conceptual monitoring information to ensure the model continues to work as intended.  
 * ~~Animated GIFs~~ (well, okay, these aren't part of my professional career, but this is a fun Kaggle entry so...)
 
-![Picture: Barack Obama shrugging.](https://media.giphy.com/media/pPhyAv5t9V8djyRFJH/giphy.gif)
+<!-- ![Picture: Barack Obama shrugging.](https://media.giphy.com/media/pPhyAv5t9V8djyRFJH/giphy.gif) -->
 
 This kernel should be read in conjunction with its "sister", "House Prices from a Consultant's Perspective: Business", in which I used a combination of linear regression and decision trees to reach a higher RMSE but, in my opinion, is more likely to provide benefits to a client. The layout is the same and I've plagarised myself a substantial amount in these kernels.
 
@@ -152,7 +152,15 @@ testData <- fullData %>% filter( Source=='Test' )
 
 # Model Derivation
 
-Having loaded and cleaned the data, we're now ready to do the machine learning! Let's use a support vector machine, as mentioned in the scope document.
+Here, I'll be using some rather standard data science techniques to build my regression function. For completeness, I'll explicitly state a couple of steps.
+
+## Variable Selection
+
+The response variable is the `SalePrice`, transformed to be the `log( SalePrice )`. All of the other variables (except the `Id` variable) will be considered independent variables. Other than cleaning to replace missing values, there's no consideration of variable effectiveness, correlation with the response, etc.
+
+## SVM Model
+
+With the depenent and independent variables identified, we're ready to fit a regression function. We're now ready to do the machine learning! Let's use a support vector machine, as mentioned in the scope document. 
 
 ```{r modelDerivation}
 # Train the SVM. 
@@ -165,7 +173,7 @@ svmModel <- svm( SalePrice ~ .
 
 ...and we're done. It feels rather anticlimactic, doesn't it?
 
-![Picture: A man reading to the end of a scroll. Upon reaching the end, the text of "That can't be it! Where's the rest of it?" appears, as he looks under and around the scroll.](https://media.giphy.com/media/1xOyI9ES9lsB7YnK2t/giphy.gif)
+<!-- ![Picture: A man reading to the end of a scroll. Upon reaching the end, the text of "That can't be it! Where's the rest of it?" appears, as he looks under and around the scroll.](https://media.giphy.com/media/1xOyI9ES9lsB7YnK2t/giphy.gif) -->
 
 
 
@@ -254,7 +262,7 @@ The implementation of the SVM is straightforward in an `R` environment, as demon
 ```{r testCases}
 testTrain <- predTrainData %>%
   # Grab the Id and predictions only, to save space
-  select( Id, oldPredPrice, predPrice ) %>%
+  select( Id, predPrice ) %>%
   # How many is "enough"? I've taken 10.
   sample_n( 10 ) 
 
@@ -273,7 +281,7 @@ But this is an open Kaggle competition, not a deliverable for a client.
 
 So...um...yeah....
 
-![Picture: Spock from Star Trek fidgeting with his collar, with the subtext "Awkward"](https://media.giphy.com/media/tUmqyBrCWAyTC/giphy.gif)
+<!-- ![Picture: Spock from Star Trek fidgeting with his collar, with the subtext "Awkward"](https://media.giphy.com/media/tUmqyBrCWAyTC/giphy.gif) -->
 
 Let's talk about Monitoring, shall we?
 
@@ -314,7 +322,11 @@ The average difference between the sample submission and my reproduction is `r c
 
 ### Monitoring Plots
 
-First, let's consider a retrospective history of model performance, of both the baseline model and the SVM.
+First, let's consider a retrospective history of model performance, of both the baseline model and the SVM.  
+
+#### Historical Comparison
+
+We consider a retrospective comparison of the old model and the SVM. Going forward, it is assumed that the model will be assessed every month.
 
 ```{r timePlots}
 # Make a function to calculate the metric
@@ -413,7 +425,7 @@ Note that it's likely that we'll be able to select an *individual* case where th
 
 I've tried to include information that I've found useful as a professional data science consultant. I've also tried to emphasise an important part of being a data scientist: You should take opportunities to have fun with your work. 
 
-![Picture: Snoopy and Woodstock from the cartoon "Peanuts" dancing together.](https://media.giphy.com/media/3ornjX5H61CKdFonks/giphy.gif)
+<!-- ![Picture: Snoopy and Woodstock from the cartoon "Peanuts" dancing together.](https://media.giphy.com/media/3ornjX5H61CKdFonks/giphy.gif) -->
 
 On a more serious note, I do encourage you to try to consider the business needs of data science, what the business impact will be (in terms of dollars rather than reduction of RSME).
 
